@@ -1,0 +1,47 @@
+name: Official Lark Mac preflight - no login
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/lark-macos-preflight.yml'
+      - 'tests/run_lark_preflight.py'
+
+permissions:
+  contents: read
+
+jobs:
+  official-lark-preflight:
+    name: Official Lark8.3.14 / ARM64 / no login
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify and launch official Lark without account access or capture
+        env:
+          BANK_LARK_RUNNER_KIND: ${{ runner.environment }}
+        run: python3 -X utf8 -B tests/run_lark_preflight.py --artifacts lark-preflight-artifacts
+      - name: State the authentication blocker and unexecuted stages
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f lark-preflight-artifacts/report-only/summary.md ]]; then
+            cat lark-preflight-artifacts/report-only/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' \
+              '## Lark preflight did not produce a report' \
+              'No actual Lark ZIP download, Finder extraction, or Finder launch has been demonstrated.' \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload static metadata report only - no app/profile/screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: official-lark-preflight-metadata-only
+          path: lark-preflight-artifacts/report-only/
+          if-no-files-found: warn
+          retention-days: 7
