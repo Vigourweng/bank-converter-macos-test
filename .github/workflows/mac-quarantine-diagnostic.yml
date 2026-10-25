@@ -23,7 +23,6 @@ jobs:
       PYTHON_BIN: /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14
       PYTHONNOUSERSITE: '1'
       PYTHONDONTWRITEBYTECODE: '1'
-      BANK_DIAGNOSTIC_RUNNER_KIND: ${{ runner.environment }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,6 +30,8 @@ jobs:
 
       - name: Install official Python only on this temporary GitHub Mac
         shell: bash
+        env:
+          BANK_DIAGNOSTIC_RUNNER_KIND: ${{ runner.environment }}
         run: |
           set -euo pipefail
           if [[ "$BANK_DIAGNOSTIC_RUNNER_KIND" != 'github-hosted' || "$RUNNER_OS" != 'macOS' ]]; then
@@ -54,6 +55,8 @@ jobs:
 
       - name: Observe the verified copy through LaunchServices without overriding security
         shell: bash
+        env:
+          BANK_DIAGNOSTIC_RUNNER_KIND: ${{ runner.environment }}
         run: |
           set -euo pipefail
           "$PYTHON_BIN" -X utf8 -B tests/run_quarantine_launch_check.py \
