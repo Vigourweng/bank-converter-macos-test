@@ -27,6 +27,7 @@ def workflow_child(args, app, screenshot_window, *, require_macos=True):
     standard = work / "Synthetic known headings.csv"
     custom = work / "Synthetic opaque layout.csv"
     reused = work / "Synthetic next month different filename.csv"
+    qif = work / "Synthetic explicit QIF date order.qif"
     standard.write_text(
         "Date,Description,Amount,Balance,Account Number\n"
         ",Opening balance,,1000,000789\n"
@@ -48,7 +49,8 @@ def workflow_child(args, app, screenshot_window, *, require_macos=True):
         "04/10/2026,SYNTHETIC NEXT PAYMENT,-25,1425,000789\n"
         ",Closing balance,,1425,000789\n", encoding="utf-8",
     )
-    sources = (standard, custom, reused)
+    qif.write_text('!Type:Bank\nD10/03/2026\nT30.00\nN1\nMSYNTHETIC QIF RECEIPT\n^\nD10/14/2026\nT-5.00\nN2\nMSYNTHETIC QIF PAYMENT\n^\n', encoding='utf-8')
+    sources = (standard, custom, reused, qif)
     original_hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     # Reject a fixture that has accidentally become auto-recognizable; otherwise
     # profile persistence/reuse would not actually be tested.
@@ -148,6 +150,21 @@ def workflow_child(args, app, screenshot_window, *, require_macos=True):
 
     def start():
         root = state["root"]
+        button(root, "支持范围").invoke()
+        scope_windows = [child for child in root.winfo_children()
+                         if isinstance(child, tk.Toplevel) and child.title().startswith("支持范围")]
+        assert len(scope_windows) == 1, "Support scope button did not open its real window"
+        scope_window = scope_windows[0]
+        scope_texts = [child for child in widgets(scope_window) if isinstance(child, tk.Text)]
+        assert len(scope_texts) == 1, "Expected the packaged scope document in a text view"
+        packaged_scope = Path(app.__file__).resolve().with_name("支持范围.txt").read_text(encoding="utf-8")
+        assert scope_texts[0].get("1.0", "end-1c") == packaged_scope, "Scope window did not read the complete packaged document"
+        assert str(scope_texts[0].cget("state")) == "disabled", "Scope document should be read-only"
+        assert "FNB / RMB" in packaged_scope and "并非所有 XML" in packaged_scope
+        button(scope_window, "关闭").invoke()
+        assert not scope_window.winfo_exists(), "Scope Close button did not close its window"
+        result["checks"].append({"action": "support-scope", "packaged_document_read": True,
+                                  "read_only": True, "close_button": True})
         default_output = str(Path(app.__file__).resolve().parent / "results")
         entries = [w for w in widgets(root) if isinstance(w, ttk.Entry)
                    and w.get() == default_output]
@@ -207,6 +224,34 @@ def workflow_child(args, app, screenshot_window, *, require_macos=True):
         assert original_hashes == {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
         result["checks"].append({"action": "profile-reuse", "different_filename": True,
                                   "different_month": True, "sources_unchanged": True})
+        choose(qif, generate_qif)
+
+    def generate_qif():
+        root = state['root']
+        assert '需要处理' in log_text() and '不明确' in log_text(), 'Ambiguous QIF date was silently accepted'
+        selectors = [w for w in widgets(root) if isinstance(w, ttk.Combobox)
+                     and tuple(w['values']) == ('AUTO', 'MDY', 'DMY')]
+        assert len(selectors) == 1 and selectors[0].get() == 'AUTO'
+        selectors[0].set('MDY')
+        button(root, '检查格式').invoke()
+        assert '已识别' in log_text() and '需要处理' not in log_text()
+        button(root, '校验并生成').invoke()
+        runs = sorted(output.glob('*/校验数据.json'))
+        assert len(runs) == 4
+        current = runs[-1]
+        report = json.loads(current.read_text(encoding='utf-8'))
+        assert report['period'] == '2026-10' and report['net'] == '25.00'
+        assert report['transaction_count'] == 2 and report['warnings']
+        assert report['sources'][0]['opening'] is None
+        with (current.parent/'ERP_import_2026-10.csv').open(encoding='utf-8-sig',newline='') as handle:
+            rows = list(csv.reader(handle))
+        assert rows[1] == ['01/10/2026'] + ['']*6
+        assert rows[-1] == ['31/10/2026'] + ['']*6
+        assert [r[0] for r in rows[2:-1]] == ['03/10/2026', '14/10/2026']
+        assert original_hashes == {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+        result['checks'].append({'action':'QIF-explicit-date-order','default_ambiguity_blocked':True,
+                                 'selected':'MDY','net':'25.00','missing_balances_disclosed':True,
+                                 'boundary_rows_blank_except_date':True,'sources_unchanged':True})
         optional_screenshot(state["root"], "generated")
         state["finished"] = True
         state["root"].destroy()

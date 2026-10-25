@@ -1,0 +1,118 @@
+银行流水工具 v5.2 · 支持范围
+核对日期：2026 年 10 月 25 日
+
+先看结论
+本工具已实现下列文件格式的解析，并使用虚构数据测试。
+这不代表“南非所有银行、所有账户、所有导出方式均已认证”。同一家银行的个人网银、企业网银、商户结算和历史版本，格式可能不同。
+请先选择文件并点击“检查格式”。检查未通过时，不应直接生成或导入 IQ。
+
+一、当前已实现的文件格式
+
+• CSV / TSV / TXT 表格：识别常见日期、金额、收入/支出、说明、参考号、账户及余额列；支持逗号、分号、制表符和竖线分隔。陌生表头可以在“设置列对应”中保存规则。
+• Excel：XLSX、XLS，以及部分以 XLS 为扩展名的 HTML/文本表格。损坏或加密工作簿暂不支持。
+• OFX / QFX：按文件中的账户与交易读取。不把缺少独立期初余额的交易清单说成“完整核平”。
+• MT940：已实现规定结构的账户、期初期末余额和交易记录；其他 SWIFT 类型不能只靠改扩展名使用。
+• camt.053 XML：已实现单账户、已入账交易的部分结构。并非所有 XML 都是 camt.053；银行自有 XML 格式不能直接视为支持。
+• 既有的三种 7/8 列旧式流水布局：已有专门规则和虚构数据测试，不能据此推断所有无表头文件都能使用。
+
+• QIF：已实现单账户 Bank 交易子集。QIF 专用日期顺序默认 AUTO，有歧义时停止；FNB 官方规范使用 MDY，需要在 QIF 日期设置中明确选择。分类拆分、投资账户、多账户或不完整记录暂不支持。没有独立期初期末余额，不能完整核平。
+• OFC：已实现单账户银行交易子集，包括可省略叶节点结束标签的结构。方向以交易金额的正负号为准，不用部分银行固定填写的 TRNTYPE 推断。缺少独立期初余额或币种时会说明限制，不推算余额或假定币种。
+• FNB / RMB Stmnt3：仅官方 RSA(015) / CUR / version3、每行250字节 ASCII 的 H/T 子集。核对交易序号、记录计数、借贷笔数及总额、账户/币种一致性和分段余额。应计服务费不会再次加减到交易金额。其他国家、产品、版本、编码或记录类型不在当前规则内。
+
+二、银行与渠道状态
+
+“可先检查”表示已有相应的通用格式解析器；仍需核对具体文件的列、日期、正负号、费用和余额，并非该银行全部格式已认证。
+“待专项适配”表示该导出方式需要额外规则。
+“未核实”表示尚无足够的官方格式说明和对应测试，不能承诺直接使用。
+
+已有通用格式可先检查
+银行 / 渠道 | 可先检查的格式 | 尚需确认的部分
+FNB / RMB | 常见 CSV、OFX、MT940；已测试的 QIF、OFC、Stmnt3 子集 | 企业网银有多种不同布局；无表头 CSV、SAP、Pastel、Multicash 等不能统称为已支持。新增规则基于官方文档和虚构样例，不代表全部现行产品已认证。
+Nedbank | 常见 CSV、OFX、Excel，以及现有 QIF/OFC 子集 | 不同产品的实际表头、日期顺序和余额含义尚未逐一认证；没有使用真实 Nedbank 流水做公开测试。
+Discovery Bank | 交易清单 CSV / Excel | 公开说明未给出全部列定义；筛选后的交易清单可能没有独立期初期末余额。
+Bank Zero | Excel / XLS 交易历史 | 实际列及余额结构仍需检查；交易历史与正式对账单可能不同。
+HBZ Bank | Excel 历史记录 | 其 XML 不能自动当作 camt.053，需另外核实。
+Standard Bank 商户服务 | 商户渠道的 CSV / Excel / OFX | 商户结算、手续费和到账金额需要单独核对；不能据此认定普通银行账户流水已认证。
+
+需要其他方式或专门规则
+银行 / 渠道 | 官方材料中已确认的情况 | 当前限制
+Absa | 部分电子对账单及盖章对账单为 PDF | PDF 暂不支持；南非个人/企业 CSV 或其他专有导出的准确结构仍待核实。
+Capitec | App 明确提供 PDF 对账单 | PDF 暂不支持；其他导出渠道不能仅根据第三方说法列为已认证。
+Investec South Africa | 可下载对账单；另有交易/PDF API | PDF 和直接 API 连接暂不支持；本次未确认南非 CSV 导出的准确表头。
+Standard Bank Business Online | 官方说明提供多种财务软件兼容导出 | 具体账户导出结构未逐项核实；不推断 CATS、MIL99 或其他企业格式等同于普通 CSV。
+
+尚未核实具体导出结构
+African Bank；GoTyme Bank South Africa（原 TymeBank）；Bidvest Bank；Access Bank South Africa；Al Baraka South Africa；OM Bank；Finbond Mutual Bank；GBS Mutual Bank；eNL Mutual Bank。
+Sasfin 历史流水也需要独立核实，不能把旧版说明当作当前文件格式的保证。
+
+Bank of China、Bank of Communications、Bank of Taiwan、Citibank、China Construction Bank、Deutsche Bank、Goldman Sachs、JPMorgan Chase、Standard Chartered、State Bank of India 等在南非的具体渠道，本次未逐一核实。Postbank、合作银行及其他产品也未完成逐项适配。
+以上是当前核对清单，不是完整的银行认证名录。
+
+三、目前不要直接交给本工具处理的文件
+
+• PDF、照片、扫描件、截图：尚未实现提取和识别。
+• 受密码保护或损坏的 Excel 文件。
+• 银行专有 XML、除上述 Stmnt3 子集以外的固定宽度、SAP、Pastel、Multicash、BAI、MT950、CATS/MIL99 等企业接口：没有相应规则时不能仅靠改文件后缀使用。
+• ZIP 压缩包内的流水：先取得真实原始文件；工具不会自动解压导入。
+• 多账户、多币种、未入账交易或跨月混合文件：可能需要按账户、币种和月份分开处理；检查出现提示时应先解决。
+
+四、检查结果怎么看
+
+“已识别”只说明能按现有规则读取，不等于某银行的所有版本都已认证。
+“期初期末余额核平”需要原文件提供独立余额，并通过期初 + 本期净变动 = 期末及可用余额链检查。
+没有独立余额时，工具会说明“未核平”，不会用交易合计代替独立银行余额。
+陌生表头可以手工设置列对应，但仍需核对日期、金额方向、费用是否已包含和账户含义。
+内部转账两边都会保留，不自动抵消；可疑重复交易也不会擅自删除。
+IQ 输出顺序固定为：表头 → 月初日期 → 所有交易 → 月末日期。首尾日期行的其余六列留空，不计入交易笔数和合计。
+
+五、Mac 实测的范围
+
+基础版本已在 Intel 和 Apple Silicon 的 macOS 15 通过测试，包含实际程序窗口、生成与保存列规则的虚构数据流程。新增规则的最新结果请查看同一仓库 Actions 页面。
+实测记录：https://github.com/Vigourweng/bank-converter-macos-test/actions/runs/40187642632
+这不能证明浏览器下载后的隔离文件能通过 Finder 检查。只读安全检查拒绝了未签名启动文件；“已损坏”提示与 Finder 双击仍需单独解决，不能凭测试绿色认定已修复。
+
+六、官方参考材料（本说明可离线阅读，以下网址用于核对来源）
+
+FNB / RMB 导出类型与布局：
+https://www.online.fnb.co.za/rhelp_1_15/OBE_RMB_Downloads/Statements.htm
+FNB QIF / OFC / Stmnt3 官方布局：
+https://www.online.fnb.co.za/rhelp_0_15/OBE_SA_Downloads/assets/docs/Statement_Type_-_QIF.pdf
+https://www.online.fnb.co.za/rhelp_0_15/OBE_SA_Downloads/assets/docs/Statement_Type_-_OFC.pdf
+https://www.online.fnb.co.za/rhelp_1_15/OBE_RMB_Downloads/assets/docs/Statement_Type_-_Stmnt_3.pdf
+FNB 个人网银指南：
+https://www.online.fnb.co.za/rhelp_0_15/OB_SA_Downloads/Downloads/User_Guides/OB_SA.pdf
+Nedbank 指定日期流水下载：
+https://private.nedbank.co.za/content/nedbank/za/en/personal/bank/digital-banking/channels/online-banking/online-banking-how-to-guides/Download-a-statement-for-specific-dates.html
+Nedbank 历史网银指南：
+https://www.nedbank.co.za/content/dam/nedbank/site-assets/Personal/Digital/OnlineBanking/Nedbank%20Online%20Banking%20How%20To%20Guide%20Sept2020.pdf
+Standard Bank Business Online：
+https://www.businessonline.standardbank.co.za/bol/balances-and-statements.html
+Standard Bank 商户服务指南：
+https://merchantconsole.standardbank.co.za/assets/UserGuides/MerchantOnline/MerchantOnline-MerchantUserGuide.pdf
+https://merchantconsole.standardbank.co.za/assets/UserGuides/SimplyBlu/SimplyBluMerchantPortal%28Web%29-UserGuidev1.pdf
+Absa 电子对账单：
+https://www.absa.co.za/self-service/digital-banking-services/anytime-anywhere-banking-transactions/estatements/
+Capitec App 对账单：
+https://www.capitecbank.co.za/were-here-to-help/how-to/how-to-email-statements-from-your-phone/
+Discovery 交易清单：
+https://www.discovery.co.za/bank/blog-bank-app-paperless-finances-with-smart-vault
+Investec South Africa 对账单及 API：
+https://www.investec.com/en_za/One-Place/welcome-to-investec-private-banking.html
+https://developer.investec.com/api-reference/SA%20PB%20Account%20Information
+Bank Zero：
+https://www.bankzero.co.za/faqs/
+https://www.bankzero.co.za/rates-and-pricing/
+HBZ Bank：
+https://www.hbzbank.co.za/hcb-mobile/
+GoTyme South Africa：
+https://gotyme.co.za/personal/help/faqs
+Bidvest Bank：
+https://www.bidvestbank.co.za/documents/Bidvest-Bank-Pricing-Guide.pdf
+Access Bank South Africa：
+https://southafrica.accessbankplc.com/business-banking/bank/
+Al Baraka South Africa：
+https://www.albaraka.co.za/products/online-statement
+南非储备银行名录（银行名单会更新；名录本身不证明文件格式支持）：
+https://www.resbank.co.za/en/home/what-we-do/Prudentialregulation/sa-registered-banks-and-representative-offices
+
+说明只使用公开官方资料和虚构测试数据；没有把客户真实流水作为公开样例。

@@ -96,7 +96,7 @@ def source_summary(path, account, opening, closing, transactions, digest, encodi
     }
 
 
-def parse_source(path: Path, *, profiles=None, date_order='DMY'):
+def parse_source(path: Path, *, profiles=None, date_order='DMY', qif_date_order='AUTO'):
     path = Path(path)
     if path.suffix.lower() in ('.xls','.xlsx'):
         try: tables = bank_formats.load_tables(path)
@@ -125,7 +125,7 @@ def parse_source(path: Path, *, profiles=None, date_order='DMY'):
             return parse_hist_statement(path)
     try:
         profiles = bank_formats.read_profiles(RULES_PATH) if profiles is None else profiles
-        entries, summary = bank_formats.parse_adaptive(path, profiles, date_order)
+        entries, summary = bank_formats.parse_adaptive(path, profiles, date_order, qif_date_order=qif_date_order)
         tx = [Transaction(path.name, e['source_row'], e['account'], e['date'], e['amount'],
                           e['description'], e['reference']) for e in entries]
         return tx, summary
@@ -396,17 +396,17 @@ def choose_sources(input_folder: Path | None = None, files=None, reference: Path
         if not path.is_file():
             raise InputError(f'找不到原始文件：{path.name}')
         if path.suffix.lower() not in bank_formats.ALLOWED:
-            raise InputError(f'{path.name}：支持 CSV、TSV、TXT、XLS、XLSX、OFX/QFX、camt XML 和 MT940；暂不支持 PDF 或图片')
+            raise InputError(f'{path.name}：支持 CSV、TSV、TXT、XLS、XLSX、OFX/QFX、QIF、OFC、camt XML、MT940 及已验证的 FNB Stmnt3 子集；暂不支持 PDF 或图片，详细限制见“支持范围”')
     priority = {name.casefold(): n for n, name in enumerate(SOURCES)}
     paths.sort(key=lambda p: (priority.get(p.name.casefold(), len(priority)), p.name.casefold(), str(p)))
     return paths, sorted(skipped)
 
 
-def prepare(input_folder: Path | None = None, period: str = '', reference: Path | None = None, *, files=None, date_order='DMY', profiles=None):
+def prepare(input_folder: Path | None = None, period: str = '', reference: Path | None = None, *, files=None, date_order='DMY', profiles=None, qif_date_order='AUTO'):
     paths, skipped = choose_sources(input_folder, files, reference)
     transactions, summaries = [], []
     for path in paths:
-        tx, summary = parse_source(path, profiles=profiles, date_order=date_order)
+        tx, summary = parse_source(path, profiles=profiles, date_order=date_order, qif_date_order=qif_date_order)
         summary['path'] = str(path)
         transactions.extend(tx)
         summaries.append(summary)
@@ -462,12 +462,12 @@ def prepare(input_folder: Path | None = None, period: str = '', reference: Path 
     return transactions, report
 
 
-def inspect_sources(input_folder=None, *, files=None, profiles=None, date_order='DMY'):
+def inspect_sources(input_folder=None, *, files=None, profiles=None, date_order='DMY', qif_date_order='AUTO'):
     paths, skipped = choose_sources(input_folder, files)
     checks = []
     for path in paths:
         try:
-            tx, summary = parse_source(path, profiles=profiles, date_order=date_order)
+            tx, summary = parse_source(path, profiles=profiles, date_order=date_order, qif_date_order=qif_date_order)
             checks.append({'file':str(path),'ok':True,'format':summary.get('format','8列 HIST 流水'),
                            'count':len(tx),'months':sorted({t.date.strftime('%Y-%m') for t in tx}),
                            'validation':summary.get('validation','期初期末余额核平'),
@@ -567,7 +567,7 @@ def gui():
     from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
-    root.title('银行流水合并工具 v5.1')
+    root.title('银行流水合并工具 v5.2')
     root.geometry('1020x730')
     root.minsize(950, 650)
     frame = ttk.Frame(root, padding=22)
@@ -575,12 +575,13 @@ def gui():
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(10, weight=1)
     ttk.Label(frame, text='银行流水合并工具', font=(UI_FONT, 18, 'bold')).grid(row=0, column=0, sticky='w', pady=(0, 8))
-    ttk.Label(frame, text='CSV / Excel / OFX / MT940 / camt XML；先检查格式，再生成 IQ 月初 → 交易 → 月末', font=(UI_FONT, 10)).grid(row=1, column=0, sticky='w', pady=(0, 18))
+    ttk.Label(frame, text='CSV / Excel / OFX / QIF / OFC / MT940 / camt / FNB Stmnt3；IQ 月初 → 交易 → 月末', font=(UI_FONT, 10)).grid(row=1, column=0, sticky='w', pady=(0, 18))
     source_display = tk.StringVar(value='尚未选择银行流水')
     selection = {'files': None, 'folder': None}
     reference = tk.StringVar()
     period = tk.StringVar()
     date_order = tk.StringVar(value='DMY')
+    qif_date_order = tk.StringVar(value='AUTO')
     output = tk.StringVar(value=str(Path(__file__).resolve().parent / 'results'))
     destination = {'path': None}
 
@@ -603,7 +604,7 @@ def gui():
             reference.set(selected)
 
     def pick_files():
-        chosen = filedialog.askopenfilenames(parent=root, title='选择原始银行流水（可按 Ctrl 或 Shift 多选）', filetypes=[('银行文件', '*.csv *.tsv *.txt *.xlsx *.xls *.ofx *.qfx *.xml *.mt940 *.sta'),('所有文件','*.*')])
+        chosen = filedialog.askopenfilenames(parent=root, title='选择原始银行流水（可按 Ctrl 或 Shift 多选）', filetypes=[('银行文件', '*.csv *.tsv *.txt *.xlsx *.xls *.ofx *.qfx *.ofc *.qif *.xml *.mt940 *.sta *.stm3 *.stmt3'),('所有文件','*.*')])
         if chosen:
             selection['files'] = [Path(p) for p in chosen]
             selection['folder'] = None
@@ -654,7 +655,7 @@ def gui():
             messagebox.showerror('缺少路径', '请选择原始银行流水和结果保存位置。', parent=root)
             return
         try:
-            tx, report = prepare(selection['folder'], period.get(), Path(reference.get()) if reference.get().strip() else None, files=selection['files'], date_order=date_order.get())
+            tx, report = prepare(selection['folder'], period.get(), Path(reference.get()) if reference.get().strip() else None, files=selection['files'], date_order=date_order.get(), qif_date_order=qif_date_order.get())
             path = write_result(tx, report, Path(output.get()))
             destination['path'] = path
             status.set(f"已合并 {len(report['sources'])} 份流水、{report['transaction_count']} 笔交易；{'有提示，请查看报告' if report['warnings'] else '各账户余额均核平'}。")
@@ -672,8 +673,8 @@ def gui():
 
     def check_formats():
         try:
-            checks,skipped=inspect_sources(selection['folder'],files=selection['files'],date_order=date_order.get())
-            lines=['格式预检查（不会写入导入文件）', '日期顺序：'+date_order.get()+'；DMY=日/月/年，MDY=月/日/年，AUTO=有歧义则提示。','']
+            checks,skipped=inspect_sources(selection['folder'],files=selection['files'],date_order=date_order.get(),qif_date_order=qif_date_order.get())
+            lines=['格式预检查（不会写入导入文件）', '日期顺序：'+date_order.get()+'；QIF 专用：'+qif_date_order.get()+'。DMY=日/月/年，MDY=月/日/年，AUTO=有歧义则提示。','']
             for item in checks:
                 lines.append(Path(item['file']).name)
                 if item['ok']:
@@ -694,14 +695,46 @@ def gui():
             mapping_dialog(root,paths,RULES_PATH,check_formats)
         except (InputError,OSError,ValueError) as exc:messagebox.showerror('无法设置列对应',str(exc),parent=root)
 
+    def show_support_scope():
+        try:
+            scope_text = Path(__file__).resolve().with_name('支持范围.txt').read_text(encoding='utf-8')
+        except OSError:
+            messagebox.showerror('无法打开支持范围', '没有找到支持范围说明。请保留完整工具文件夹后重试。', parent=root)
+            return
+        window = tk.Toplevel(root)
+        window.title('支持范围 · 银行流水工具 v5.2')
+        window.geometry('960x720')
+        window.minsize(740, 520)
+        window.transient(root)
+        body = ttk.Frame(window, padding=16)
+        body.pack(fill='both', expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(2, weight=1)
+        ttk.Label(body, text='银行与文件格式支持范围', font=(UI_FONT, 16, 'bold')).grid(row=0, column=0, columnspan=2, sticky='w')
+        ttk.Label(body, text='按文件格式和实际检查结果判断；银行名称相同，也可能有不同的导出格式。', wraplength=880).grid(row=1, column=0, columnspan=2, sticky='w', pady=(6, 12))
+        details = tk.Text(body, wrap='word', font=(UI_FONT, 10), padx=10, pady=10)
+        scrollbar = ttk.Scrollbar(body, orient='vertical', command=details.yview)
+        details.configure(yscrollcommand=scrollbar.set)
+        details.grid(row=2, column=0, sticky='nsew')
+        scrollbar.grid(row=2, column=1, sticky='ns')
+        details.insert('1.0', scope_text)
+        details.configure(state='disabled')
+        ttk.Button(body, text='关闭', command=window.destroy).grid(row=3, column=0, columnspan=2, sticky='e', pady=(12, 0))
+
     extras=ttk.Frame(frame)
     extras.grid(row=11,column=0,sticky='ew',pady=(10,0))
     ttk.Button(extras,text='检查格式',command=check_formats).pack(side='left')
     ttk.Button(extras,text='设置列对应…',command=map_columns).pack(side='left',padx=8)
+    ttk.Button(extras,text='支持范围',command=show_support_scope).pack(side='left')
     ttk.Label(extras,text='不认识的表头可以保存为自己的规则，之后同样布局自动复用。').pack(side='left',padx=8)
 
     ttk.Button(controls, text='打开结果', command=open_result).pack(side='right')
     ttk.Button(controls, text='校验并生成', command=generate).pack(side='right', padx=8)
+    qif_controls = ttk.Frame(frame)
+    qif_controls.grid(row=12,column=0,sticky='ew',pady=(8,0))
+    ttk.Label(qif_controls,text='QIF 日期顺序').pack(side='left')
+    ttk.Combobox(qif_controls,textvariable=qif_date_order,values=('AUTO','MDY','DMY'),state='readonly',width=6).pack(side='left',padx=8)
+    ttk.Label(qif_controls,text='仅 QIF 使用；有歧义时先确认。FNB 公布的 QIF 规范使用 MDY。').pack(side='left')
     root.mainloop()
 
 
@@ -714,16 +747,17 @@ def main():
     parser.add_argument('--period', default='', help='YYYY-MM，省略则从交易自动识别')
     parser.add_argument('--reference', type=Path, help='可选的人工成品，用于逐笔对照')
     parser.add_argument('--date-order',choices=('DMY','MDY','AUTO'),default='DMY')
+    parser.add_argument('--qif-date-order',choices=('AUTO','MDY','DMY'),default='AUTO',help='QIF 专用；AUTO 遇到日/月歧义时停止，FNB 官方 QIF 为 MDY')
     parser.add_argument('--check',action='store_true',help='仅检查每份文件的格式及校验状态，不生成结果')
     args = parser.parse_args()
     if args.input is None and args.files is None:
         gui()
         return
     if args.check:
-        checks,skipped=inspect_sources(args.input,files=args.files,date_order=args.date_order)
+        checks,skipped=inspect_sources(args.input,files=args.files,date_order=args.date_order,qif_date_order=args.qif_date_order)
         print(json.dumps({'checks':checks,'skipped':skipped},ensure_ascii=False,indent=2))
         return
-    tx, report = prepare(args.input, args.period, args.reference, files=args.files,date_order=args.date_order)
+    tx, report = prepare(args.input, args.period, args.reference, files=args.files,date_order=args.date_order,qif_date_order=args.qif_date_order)
     destination = write_result(tx, report, args.output)
     print(json.dumps({'output': str(destination), 'count': report['transaction_count'],
                       'net': report['net'], 'warnings': report['warnings']}, ensure_ascii=False))

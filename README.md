@@ -4,7 +4,7 @@ This repository contains a local statement-conversion tool and synthetic test ca
 
 ## Current validation status
 
-The conversion core has been tested on Windows. macOS runtime, Finder launch, and the reported “damaged” warning are **not yet verified or resolved**. Check the repository's Actions page for actual run results. A green CI job establishes only the checks explicitly listed in its report; it does not prove that a Safari-downloaded, quarantined copy launches on every Mac.
+The conversion core has been tested on Windows. Real macOS 15 jobs on Intel and Apple Silicon both passed in [Actions run 40187642632](https://github.com/Vigourweng/bank-converter-macos-test/actions/runs/40187642632), including the extracted launcher, Tk windows, synthetic conversion, Generate and mapping-save workflows. These results apply to the release tested in that run; new changes require another run. The read-only Gatekeeper assessment rejected the unsigned command file. Finder launch and the reported “damaged” warning remain unresolved; a passing CI run does not prove that a browser-downloaded, quarantined copy launches on every Mac.
 
 ## Output contract
 
@@ -29,7 +29,9 @@ Use Python 3.10 or newer with tkinter. The official [Python macOS installer](htt
 
 Selecting files starts a format check. Unrecognized tabular layouts can be configured with the column-mapping window and saved in `format_rules.json`. This public copy starts with an empty rules file. Keep any personal mapping rules and real data outside this repository.
 
-The program distinguishes independently balanced statements from transaction lists that lack opening/closing balances. It does not claim a full reconciliation when source balances are unavailable. Supported formats include the implemented bank CSV variants, common headed tables, Excel, OFX/QFX, MT940 and camt.053 subsets. It does not support every bank-specific variant, damaged or encrypted workbooks, PDFs or images.
+The program distinguishes independently balanced statements from transaction lists that lack opening/closing balances. It does not claim a full reconciliation when source balances are unavailable. Supported formats include the implemented bank CSV variants, common headed tables, Excel, OFX/QFX, QIF Bank, OFC, MT940, camt.053 and the documented FNB/RMB Stmnt3 RSA/CUR/version3 ASCII subset. It does not support every bank-specific variant, damaged or encrypted workbooks, PDFs or images.
+
+The v5.2 **支持范围** button opens the packaged, offline `支持范围.txt` with the format families, bank/channel status, known gaps and official references. This is a coverage guide, not certification of every South African bank export. The synthetic suite covers the new QIF, OFC and Stmnt3 rules. QIF's source-specific date setting defaults to AUTO independently of table dates: ambiguous dates must be resolved explicitly. FNB's published QIF specification uses MDY. Use the QIF date selector or `--qif-date-order MDY` only after checking the source.
 
 ## Building an allowlisted release
 
@@ -47,6 +49,8 @@ No project-wide redistribution license has been selected for the application cod
 
 IQ 导入顺序固定为：**表头 → 月初日期行 → 所有交易 → 月末日期行**。首尾日期行的其余六列留空，不计入交易笔数和金额。按文件名字母顺序处理，每份文件内保留原始行序。
 
-当前不能把 Windows 测试当作 Mac 实测。请查看 Actions 的实际报告；Finder 双击、浏览器下载隔离属性和“已损坏”弹窗需要单独验证，不能只凭 CI 绿色结果认定解决。
+Intel 与 Apple Silicon 的 macOS 15 实测均已通过，详情见 [Actions 实测记录](https://github.com/Vigourweng/bank-converter-macos-test/actions/runs/40187642632)。该记录只证明对应版本中明确测试的功能；新版本仍需重新运行。只读 Gatekeeper 检查拒绝了未签名启动文件，Finder 双击及浏览器下载后“已损坏”提示仍未解决。
+
+v5.2 界面的“支持范围”按钮可离线查看格式类别、按银行和渠道分组的状态、已知限制及官方来源。已实现通用解析不代表南非所有银行格式都已认证。QIF、OFC、Stmnt3 正在增加规则和验证，本说明暂不标记为已通过。
 
 运行需要 Python 3.10 或以上及 tkinter。Windows 使用 `start.cmd`，Mac 使用 `start_mac.command`。复制、移动时保留完整文件夹。自定义列规则及真实输入应放在本地，不提交到这个公开仓库。

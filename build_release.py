@@ -6,7 +6,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent
 APP_FILES = (
     'bank_merge.py', 'bank_formats.py', 'bank_mapping_ui.py',
-    'start.cmd', 'start_mac.command', 'format_rules.json', 'README.md',
+    'start.cmd', 'start_mac.command', 'format_rules.json', 'README.md', '支持范围.txt',
     'vendor/LICENSE.xlrd',
 )
 XLRD_FILES = (

@@ -15,12 +15,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-ALLOWED = {'.csv', '.tsv', '.txt', '.xlsx', '.xls', '.ofx', '.qfx', '.xml', '.mt940', '.sta'}
+ALLOWED = {'.csv', '.tsv', '.txt', '.xlsx', '.xls', '.ofx', '.qfx', '.qif', '.ofc', '.stm3', '.stmt3', '.xml', '.mt940', '.sta'}
 FIELDS = {'date':'日期', 'amount':'有正负号的金额', 'debit':'支出 / Debit', 'credit':'收入 / Credit',
           'description':'交易说明', 'reference':'参考号', 'balance':'交易后余额',
           'direction':'收支标记 DR/CR', 'account':'本账户编号', 'currency':'币种'}
 ALIASES = {
- 'date': ['date','transaction date','trans date','posting date','posted date','booking date','book date','value date','日期','交易日期','记账日期','入账日期','交易时间','记账时间'],
+ 'date': ['effective date','effective value date','date','transaction date','trans date','posting date','posted date','booking date','book date','value date','日期','交易日期','记账日期','入账日期','交易时间','记账时间'],
  'amount': ['amount','transaction amount','trans amount','signed amount','金额','交易金额','发生额','交易额'],
  'debit': ['debit','debits','debit amount','withdrawal','withdrawals','money out','paid out','payment amount','支出','借方','借方金额','付款金额','取款金额'],
  'credit': ['credit','credits','credit amount','deposit','deposits','money in','paid in','receipt amount','收入','贷方','贷方金额','收款金额','存款金额'],
@@ -467,6 +467,226 @@ def generic_statement(path, profiles=(), date_order='DMY'):
                   next(iter(currencies),''),sheet=sheet,header_row=header_index+1,date_order=date_order,
                   column_mapping={role:[i+1 for i in indices] for role,indices in columns.items()})
 
+def qif_statement(path, date_order='AUTO'):
+    """A conservative single-account QIF Bank reader; never infer a locale.
+
+    FNB's documented export uses MDY, but the !Type:Bank header itself does not
+    identify a bank or locale. Only a source-specific explicit MDY/DMY choice
+    may resolve ambiguous dates. General table date defaults must not do so.
+    """
+    if date_order not in ('AUTO','DMY','MDY'):
+        raise FormatError('QIF 日期顺序必须明确为 AUTO、DMY 或 MDY')
+    text,encoding=decode_text(Path(path).read_bytes())
+    entries=[];record=[];mode=None;account='';account_seen=False;bank_seen=False
+    notes=['QIF 未提供独立期初期末余额，不能完整核平；不会推算余额。',
+           'QIF 未标注币种，请确认所有待合并文件属于同一币种。',
+           'QIF 日期顺序：'+date_order+'；FNB 官方 QIF 采用 MDY，其他来源必须核实日期顺序。']
+    metadata_used=False
+
+    def consume():
+        nonlocal account,metadata_used
+        if not record:raise FormatError('QIF 存在没有内容的 ^ 记录')
+        fields={}
+        for row,code,value in record:
+            if code in fields and code!='A':
+                raise FormatError(f'QIF 第 {row} 行：字段 {code} 重复，未猜测应使用哪一个')
+            fields.setdefault(code,[]).append(value)
+        def value(code):return fields.get(code,[''])[0].strip()
+        first_row=record[0][0]
+        if mode=='account':
+            if account:raise FormatError('QIF 包含多个账户记录，请按单个账户导出')
+            if not value('N'):raise FormatError('QIF !Account 缺少账户名称')
+            if value('T') and value('T').casefold()!='bank':
+                raise FormatError('QIF 当前仅支持 Bank 银行账户，不支持其他账户类型')
+            account=value('N')
+            # Account-list balance metadata is not an independently paired
+            # opening/closing statement balance for these transactions.
+            if '$' in fields:parse_money(value('$'),'QIF 账户余额元数据')
+            return
+        if mode!='bank':raise FormatError('QIF 交易前必须存在 !Type:Bank')
+        date_text=re.sub(r'\s+','',value('D')).replace('\u2019',"'")
+        apostrophe=re.fullmatch(r"(\d{1,2})/(\d{1,2})'(\d{2})",date_text)
+        if apostrophe:
+            date_text=f'{apostrophe[1]}/{apostrophe[2]}/{2000+int(apostrophe[3])}'
+        # Two-digit slash years are ambiguous across historical QIF variants.
+        # The explicit apostrophe convention above identifies post-2000 years.
+        if not (re.fullmatch(r'\d{1,2}[-/.]\d{1,2}[-/.]\d{4}',date_text)
+                or re.fullmatch(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}',date_text)
+                or re.fullmatch(r'(?:19|20)\d{6}',date_text)):
+            raise FormatError(f'QIF 第 {first_row} 行：日期须含四位年份，或使用明确的 2000 年后撇号年份')
+        date=parse_date(date_text,date_order)
+        amount=parse_money(value('T'),'QIF T金额') if 'T' in fields else None
+        alternate=parse_money(value('U'),'QIF U金额') if 'U' in fields else None
+        if amount is None and alternate is None:raise FormatError(f'QIF 第 {first_row} 行缺少 T/U 交易金额')
+        if 'T' in fields and amount is None or 'U' in fields and alternate is None:
+            raise FormatError(f'QIF 第 {first_row} 行存在空金额字段')
+        if amount is not None and alternate is not None and amount!=alternate:
+            raise FormatError(f'QIF 第 {first_row} 行 T 与 U 金额不一致')
+        amount=alternate if amount is None else amount
+        if any(normal(value(code)) in set(map(normal,OPEN_LABELS|CLOSE_LABELS)) for code in ('P','M')):
+            raise FormatError('QIF 包含账户建账或余额记录，未将其当作交易；请导出银行交易文件')
+        entries.append({'source_row':first_row,'date':date,'amount':amount,
+                        'description':' / '.join(v for v in (value('P'),value('M')) if v),
+                        'reference':value('N')})
+        metadata_used=metadata_used or bool(set(fields).intersection({'A','C','L'}))
+
+    for n,line in enumerate(text.splitlines(),1):
+        if not line.strip():continue
+        line=line.lstrip('\ufeff')
+        if line.startswith('!'):
+            if record:raise FormatError(f'QIF 第 {n} 行：上一记录缺少结束符 ^')
+            if line.casefold()=='!account':
+                if account_seen or entries:raise FormatError('QIF 包含多个账户或账户切换，请按单个账户导出')
+                account_seen=True;mode='account'
+            elif line.casefold()=='!type:bank':
+                if bank_seen:raise FormatError('QIF 包含多个 Bank 分段，未假定属于同一账户')
+                bank_seen=True;mode='bank'
+            elif line.casefold()=='!option:allxfr':
+                if mode!='bank':raise FormatError('QIF AllXfr 选项不在 Bank 分段内')
+            else:raise FormatError(f'QIF 不支持分段 {line!r}，仅支持单个 Bank 银行账户')
+        elif line=='^':
+            consume();record=[]
+        else:
+            if mode is None:raise FormatError(f'QIF 第 {n} 行缺少账户类型表头')
+            code,value=line[0],line[1:]
+            allowed={'N','T','D','L','/','$'} if mode=='account' else set('DTUCNP MAL'.replace(' ',''))
+            if mode=='bank' and code in {'S','E','$','%'}:
+                raise FormatError('QIF 拆分分类记录尚不支持；请导出不含分类拆分的银行交易 CSV/OFX')
+            if code not in allowed:raise FormatError(f'QIF 第 {n} 行含不支持字段 {code!r}，未静默丢弃')
+            record.append((n,code,value))
+    if record:raise FormatError('QIF 最后一笔记录缺少结束符 ^，文件可能不完整')
+    if not bank_seen or not entries:raise FormatError('QIF 未包含 Bank 银行交易')
+    if not account:notes.append('QIF 未提供本账户名称/编号，来源按文件名区分。')
+    else:notes.append('QIF 的 N 账户字段是名称，不能据此保证它是银行账号。')
+    if metadata_used:notes.append('QIF 分类、已清算标记和地址未导入 IQ；交易金额和原始笔数均保留。')
+    return finish(path,entries,account,format_name='QIF 单账户 Bank 流水',notes=notes,
+                  encoding=encoding,date_order=date_order)
+
+
+class _OfcReader(HTMLParser):
+    """Parse OFC's optional leaf end tags, requiring closed aggregates."""
+    children={
+        'ofc':{'dtd','cpage','acctstmt'},
+        'acctstmt':{'acctfrom','stmtrs'},
+        'acctfrom':{'bankid','branchid','acctid','accttype'},
+        'stmtrs':{'dtstart','dtend','ledger','stmttrn'},
+        'stmttrn':{'trntype','dtposted','trnamt','fitid','cltid','srvrtid','chknum',
+                   'sic','payeeid','name','payee','acctto','memo'},
+        'payee':{'name','address','city','state','postalid','phone'},
+        'acctto':{'bankid','branchid','acctid','accttype'},
+    }
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack=[];self.roots=[];self.leaf=None
+    def handle_starttag(self,tag,attrs):
+        self.leaf=None
+        if attrs:raise FormatError('OFC 标签含未支持的属性')
+        if not self.stack:
+            if tag!='ofc' or self.roots:raise FormatError('OFC 必须只有一个完整的 OFC 根节点')
+            node={'tag':tag,'children':[],'text':''};self.roots.append(node)
+        else:
+            parent=self.stack[-1]
+            if tag not in self.children[parent['tag']]:
+                raise FormatError(f'OFC {parent["tag"]} 中含未支持标签 {tag}，未静默丢弃')
+            node={'tag':tag,'children':[],'text':''};parent['children'].append(node)
+        if tag in self.children:self.stack.append(node)
+        else:self.leaf=node
+    def handle_startendtag(self,tag,attrs):
+        raise FormatError('OFC 不支持自闭合标签，请核实导出格式')
+    def handle_endtag(self,tag):
+        if self.leaf is not None and self.leaf['tag']==tag:
+            self.leaf=None;return
+        self.leaf=None
+        if not self.stack or self.stack[-1]['tag']!=tag:
+            raise FormatError(f'OFC 标签关闭顺序错误：{tag}')
+        self.stack.pop()
+    def handle_data(self,data):
+        if self.leaf is not None:self.leaf['text']+=data
+        elif data.strip():raise FormatError('OFC 标签外有未识别文字')
+    def handle_decl(self,decl):
+        raise FormatError('OFC 不接受外部文档声明')
+    def unknown_decl(self,decl):
+        raise FormatError('OFC 含未支持的文档声明')
+    def handle_pi(self,data):
+        if not data.lower().startswith('xml '):raise FormatError('OFC 含未支持的处理指令')
+
+
+def ofc_statement(path):
+    """Read documented OFC account statements without inventing balances/signs."""
+    raw=Path(path).read_bytes()
+    page=re.search(rb'<CPAGE>\s*(\d+)',raw,re.I)
+    if page and not raw.startswith((b'\xff\xfe',b'\xfe\xff')):
+        encoding='utf-8-sig' if page[1]==b'65001' else 'cp'+page[1].decode('ascii')
+        try:text=raw.decode(encoding)
+        except (LookupError,UnicodeError) as exc:raise FormatError('OFC CPAGE 编码不支持或与文件内容不一致') from exc
+    else:text,encoding=decode_text(raw)
+    reader=_OfcReader();reader.feed(text);reader.close()
+    if reader.stack or len(reader.roots)!=1:raise FormatError('OFC 缺少完整的聚合结束标签，文件可能截断')
+    def nodes(parent,name):return [node for node in parent['children'] if node['tag']==name]
+    def one(parent,name,required=False):
+        matches=nodes(parent,name)
+        if len(matches)>1 or required and not matches:
+            raise FormatError(f'OFC {name} 必须且只能出现一次' if required else f'OFC {name} 重复')
+        return matches[0] if matches else None
+    def value(parent,name,required=False):
+        node=one(parent,name,required)
+        result=node['text'].strip() if node is not None else ''
+        if required and not result:raise FormatError(f'OFC 缺少 {name} 内容')
+        return result
+    def date(value,label):
+        if not re.fullmatch(r'\d{8}(?:\d{6})?',value):raise FormatError(f'OFC {label} 日期必须为 YYYYMMDD 或 YYYYMMDDHHMMSS')
+        parsed=datetime.strptime(value,'%Y%m%d' if len(value)==8 else '%Y%m%d%H%M%S')
+        return parsed.replace(hour=0,minute=0,second=0)
+    def amount(value,label):
+        if not re.fullmatch(r'[+-]?\d+[.,]\d{2}',value):raise FormatError(f'OFC {label} 金额必须使用明确正负号及两位小数，不能有千位分隔符')
+        return parse_money(value,'OFC '+label)
+    root=reader.roots[0]
+    # Validate every singleton, even unused metadata; no silently dropped copies.
+    for tag in ('dtd','cpage'):one(root,tag)
+    statement=one(root,'acctstmt',True)
+    source=one(statement,'acctfrom',True);response=one(statement,'stmtrs',True)
+    account=value(source,'acctid',True)
+    for tag in ('bankid','branchid'):one(source,tag)
+    account_type=value(source,'accttype')
+    if account_type and account_type not in {'0','1','2','3','4','7'}:
+        raise FormatError('OFC 账户类型不在当前支持的银行/信用卡范围内')
+    for tag in ('dtstart','dtend'):
+        metadata=value(response,tag)
+        if metadata:date(metadata,tag)
+    ledger=value(response,'ledger')
+    closing=amount(ledger,'LEDGER') if ledger else None
+    entries=[];targets=False;missing_reference=False
+    for n,transaction in enumerate(nodes(response,'stmttrn'),1):
+        # These are singleton fields even when a consumer does not map them.
+        for tag in _OfcReader.children['stmttrn']:one(transaction,tag)
+        kind=value(transaction,'trntype')
+        if kind and kind not in {str(i) for i in range(13)}:raise FormatError('OFC TRNTYPE 不在官方 0–12 范围内')
+        posted=date(value(transaction,'dtposted',True),'DTPOSTED')
+        signed=amount(value(transaction,'trnamt',True),'TRNAMT')
+        name=value(transaction,'name');payee=one(transaction,'payee')
+        if name and payee is not None:raise FormatError('OFC 同时包含 NAME 和 PAYEE，未猜测收款方')
+        if payee is not None:
+            for tag in _OfcReader.children['payee']-{'address'}:one(payee,tag)
+            if len(nodes(payee,'address'))>2:raise FormatError('OFC PAYEE 地址字段超过官方两行')
+            name=value(payee,'name')
+        target=one(transaction,'acctto')
+        if target is not None:
+            targets=True
+            for tag in _OfcReader.children['acctto']:one(target,tag)
+        reference=value(transaction,'fitid') or value(transaction,'chknum') or value(transaction,'srvrtid') or value(transaction,'cltid')
+        missing_reference=missing_reference or not reference
+        entries.append({'source_row':n,'date':posted,'amount':signed,
+                        'description':' / '.join(v for v in (name,value(transaction,'memo')) if v),
+                        'reference':reference})
+    if not entries:raise FormatError('OFC 未包含已入账交易')
+    notes=['OFC 只有期末 LEDGER（若有），没有独立期初余额，不能完整核平；不会推算期初余额。',
+           'OFC 按 TRNAMT 正负号保留收支方向，不依赖部分银行固定填写的 TRNTYPE。',
+           'OFC 未标注币种，请确认所有待合并文件属于同一币种；相同 FITID 记录不会自动去重。']
+    if targets:notes.append('OFC ACCTTO 为交易对方账户，不作为本账户；未写入 IQ 的固定七列。')
+    if missing_reference:notes.append('部分 OFC 交易没有 FITID/参考号，不能仅凭参考号识别重复导出。')
+    return finish(path,entries,account,closing=closing,format_name='OFC 单账户银行流水',notes=notes,encoding=encoding)
+
+
 def ofx_statement(path):
     text,_=decode_text(Path(path).read_bytes())
     statements=re.findall(r'<(?:STMTRS|CCSTMTRS)\b[^>]*>(.*?)</(?:STMTRS|CCSTMTRS)>',text,re.I|re.S)
@@ -584,12 +804,201 @@ def mt940_statement(path):
     if len(currencies)>1:raise FormatError('MT940 含多个币种，不能直接合并')
     return finish(path,entries,next(iter(accounts)),opening,closing,format_name='SWIFT MT940',currency=next(iter(currencies),''),segments_checked=len(segments))
 
-def parse_adaptive(path, profiles=(), date_order='DMY'):
+FNB_STMT3_SPEC = 'https://www.online.fnb.co.za/rhelp_1_15/OBE_RMB_Downloads/assets/docs/Statement_Type_-_Stmnt_3.pdf'
+
+
+def fnb_stmt3_statement(path):
+    path = Path(path)
+    raw = path.read_bytes()
+    records = raw.splitlines()
+    if not records:
+        raise FormatError('FNB Stmnt3 文件为空')
+    entries = []
+    segments = []
+    active = None
+    file_key = None
+    first_opening = None
+    last_closing = None
+    previous_statement_date = None
+    fee_control = Decimal('0.00')
+    fee_count = 0
+    unused_cheque_count = 0
+    notes = ['仅支持官方 Stmnt3 的 RSA/CUR/version3、250字节 ASCII 记录；其他版本或编码需要独立规则。']
+
+    def integer(value, label):
+        if not re.fullmatch(r'[0-9]+', value):
+            raise FormatError(f'{label}：必须为固定宽度数字，不能猜测金额或位数')
+        return int(value)
+
+    def date(value, label):
+        if not re.fullmatch(r'[0-9]{8}', value):
+            raise FormatError(f'{label}：必须为 CCYYMMDD')
+        try:
+            return datetime.strptime(value, '%Y%m%d')
+        except ValueError as error:
+            raise FormatError(f'{label}：无效日期 {value!r}') from error
+
+    def cents(value, label):
+        return (Decimal(integer(value, label)) / Decimal('100')).quantize(Decimal('.01'))
+
+    def signed(value, indicator, label):
+        result = cents(value, label)
+        if indicator not in ('C', 'D'):
+            raise FormatError(f'{label}：收支标记必须为 C 或 D')
+        return -result if indicator == 'D' else result
+
+    def close_segment():
+        nonlocal active, last_closing
+        if active is None:
+            return
+        if active['credits_seen'] != active['credits_expected'] or active['debits_seen'] != active['debits_expected']:
+            raise FormatError(f"FNB Stmnt3 表头第 {active['row']} 行：借贷交易笔数与表头不一致")
+        if active['credits_value'] != active['credit_total'] or active['debits_value'] != active['debit_total']:
+            raise FormatError(f"FNB Stmnt3 表头第 {active['row']} 行：借贷交易总额与表头不一致")
+        net = active['credits_value'] - active['debits_value']
+        if active['opening'] + net != active['closing']:
+            raise FormatError(f"FNB Stmnt3 表头第 {active['row']} 行：期初＋交易净额与期末余额不平")
+        segments.append({
+            'header_row': active['row'], 'statement_number': active['statement_number'],
+            'statement_date': active['statement_date'].strftime('%Y-%m-%d'),
+            'count': active['sequence'], 'opening': format(active['opening'], '.2f'),
+            'closing': format(active['closing'], '.2f'), 'net': format(net, '.2f'),
+        })
+        last_closing = active['closing']
+        active = None
+
+    for row_number, record in enumerate(records, 1):
+        label = f'FNB Stmnt3 第 {row_number} 行'
+        if len(record) != 250:
+            raise FormatError(f'{label}：必须恰好250字节，实际{len(record)}；未截断或补齐')
+        try:
+            row = record.decode('ascii')
+        except UnicodeError as error:
+            raise FormatError(f'{label}：当前仅支持 ASCII Stmnt3，未猜测其他编码') from error
+        if any(ord(char) < 32 or ord(char) == 127 for char in row):
+            raise FormatError(f'{label}：记录中含控制字符')
+        if row[:3] != '015' or row[3:6] != 'CUR':
+            raise FormatError(f'{label}：当前仅支持 RSA(015) / CUR 账户，未猜测其他国家或产品')
+        branch, account = row[6:14], row[14:30]
+        integer(branch, label + '分行代码')
+        integer(account, label + '账户编号')
+        if not branch.endswith('00'):
+            raise FormatError(f'{label}：分行代码必须符合6位代码及两个尾零')
+        date(row[30:38], label + '处理日期')
+        if row[249] != '3':
+            raise FormatError(f'{label}：当前仅支持 Stmnt3 version3')
+        record_type = row[43]
+        if record_type == 'H':
+            close_segment()
+            currency = row[240:243]
+            if not re.fullmatch(r'[A-Z]{3}', currency):
+                raise FormatError(f'{label}：币种必须为3位大写代码')
+            current_key = (branch, account, currency)
+            if file_key is None:
+                file_key = current_key
+            elif current_key != file_key:
+                raise FormatError(f'{label}：同一文件包含不同账户、分行或币种，请分别导出')
+            if row[38:43] != '00000':
+                raise FormatError(f'{label}：表头保留序号字段必须为00000')
+            statement_date = date(row[64:72], label + '对账单日期')
+            prior_date = date(row[72:80], label + '上一对账单日期')
+            if prior_date > statement_date:
+                raise FormatError(f'{label}：上一对账单日期晚于本期日期')
+            if previous_statement_date is not None and statement_date < previous_statement_date:
+                raise FormatError(f'{label}：文件中的对账单日期倒退')
+            previous_statement_date = statement_date
+            opening = signed(row[80:93], row[93], label + '期初余额')
+            closing = signed(row[94:107], row[107], label + '期末余额')
+            if last_closing is not None and opening != last_closing:
+                raise FormatError(f'{label}：上一段期末与本段期初余额不连续')
+            if first_opening is None:
+                first_opening = opening
+            active = {
+                'row': row_number, 'opening': opening, 'closing': closing,
+                'statement_date': statement_date,
+                'statement_number': row[144:149],
+                'credits_expected': integer(row[108:113], label + '贷方笔数'),
+                'credit_total': cents(row[113:126], label + '贷方总额'),
+                'debits_expected': integer(row[126:131], label + '借方笔数'),
+                'debit_total': cents(row[131:144], label + '借方总额'),
+                'credits_seen': 0, 'debits_seen': 0,
+                'credits_value': Decimal('0.00'), 'debits_value': Decimal('0.00'),
+                'sequence': 0,
+            }
+            integer(active['statement_number'], label + '对账单序号')
+        elif record_type == 'T':
+            if active is None:
+                raise FormatError(f'{label}：交易之前缺少 H 表头')
+            if (branch, account) != file_key[:2]:
+                raise FormatError(f'{label}：交易账户或分行与表头不一致')
+            expected_sequence = active['sequence'] + 1
+            if integer(row[38:43], label + '交易序号') != expected_sequence:
+                raise FormatError(f'{label}：交易序号必须从1连续递增，不能静默删除或重复交易')
+            if integer(row[92:98], label + '交易记录计数') != expected_sequence:
+                raise FormatError(f'{label}：交易记录计数必须从1连续递增')
+            transaction_date = date(row[44:52], label + '有效日期')
+            date(row[52:60], label + '入账日期')
+            integer(row[60:65], label + '交易代码')
+            indicator = row[80]
+            amount = signed(row[67:80], indicator, label + '交易金额')
+            fee_amount = cents(row[98:105], label + '应计服务费')
+            fee_indicator = row[105]
+            if fee_indicator not in ('C', 'D') and not (fee_amount == 0 and fee_indicator == ' '):
+                raise FormatError(f'{label}：应计服务费收支标记无效')
+            fee_control += -fee_amount if fee_indicator == 'D' else fee_amount
+            if fee_amount:
+                fee_count += 1
+            description = row[177:219].rstrip()
+            narrative = row[118:165].rstrip()
+            if narrative and narrative != description:
+                description = description + ' / ' + narrative if description else narrative
+            reference = row[219:249].rstrip()
+            cheque = row[106:118].strip()
+            integer(cheque, label + '兼容支票号码')
+            meaningful_cheque = bool(int(cheque))
+            if not reference and meaningful_cheque:
+                reference = cheque
+            elif reference and meaningful_cheque and reference != cheque:
+                unused_cheque_count += 1
+            entries.append({
+                'source_row': row_number, 'date': transaction_date, 'amount': amount,
+                'description': description, 'reference': reference,
+            })
+            active['sequence'] = expected_sequence
+            if indicator == 'C':
+                active['credits_seen'] += 1
+                active['credits_value'] += amount
+            else:
+                active['debits_seen'] += 1
+                active['debits_value'] += abs(amount)
+        else:
+            raise FormatError(f'{label}：未知记录类型 {record_type!r}，仅支持 H/T，未忽略')
+
+    close_segment()
+    if file_key is None:
+        raise FormatError('FNB Stmnt3 缺少 H 表头')
+    if fee_count:
+        notes.append(f'{fee_count}笔包含应计服务费；按原始交易金额核对，未重复加减服务费。IQ SERVICE FEE 列仍为空，请按原始文件复核该字段。')
+    if unused_cheque_count:
+        notes.append(f'{unused_cheque_count}笔同时含纸质参考号及不同的兼容支票号；使用官方推荐的纸质参考号，兼容号码保留在原始文件。')
+    return finish(
+        path, entries, file_key[1], first_opening, last_closing,
+        format_name='FNB/RMB Stmnt3 / RSA CUR version3 ASCII', notes=notes,
+        currency=file_key[2], segments_checked=len(segments), segments=segments,
+        accrued_service_fee_control=format(fee_control, '.2f'),
+        schema_evidence=FNB_STMT3_SPEC,
+    )
+
+
+def parse_adaptive(path, profiles=(), date_order='DMY', qif_date_order='AUTO'):
     path=Path(path)
     try:
         raw=path.read_bytes()
         head=raw[:3000].decode('utf-8',errors='ignore')
         suffix=path.suffix.lower()
+        if suffix=='.qif' or re.search(r'(?mi)^!(?:Type:Bank|Account)\s*$',head):return qif_statement(path,qif_date_order)
+        if suffix=='.ofc' or re.search(r'<OFC[>\s]',head,re.I):return ofc_statement(path)
+        if suffix in ('.stm3','.stmt3') or re.match(rb'^\d{3}CUR',raw):return fnb_stmt3_statement(path)
         if suffix in ('.ofx','.qfx') or re.search(r'<OFX[>\s]',head,re.I):return ofx_statement(path)
         if suffix in ('.mt940','.sta') or re.search(r'(?m)^:60[FM]:',head):return mt940_statement(path)
         if suffix=='.xml' and ('<Document' in head or 'camt.' in head):return camt_statement(path)

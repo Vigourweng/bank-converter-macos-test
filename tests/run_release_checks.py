@@ -287,10 +287,10 @@ def main():
         appdir.parent.mkdir(exist_ok=False)
         (unpacked / "bank_converter").rename(appdir)
         passed("Released app relocates into a Chinese and spaced directory")
-        regression_script = Path(__file__).resolve().with_name("test_formats.py")
-        assert regression_script.is_file(), "Release parser regression script is missing"
+        regression_directory = Path(__file__).resolve().parent
+        assert (regression_directory / "test_formats.py").is_file(), "Release parser regression script is missing"
         regression_env = dict(os.environ, BANK_TOOL_ROOT=str(appdir))
-        regressions = command([sys.executable, "-B", regression_script], env=regression_env, timeout=60)
+        regressions = command([sys.executable, "-B", "-m", "unittest", "discover", "-s", regression_directory, "-p", "test_*.py", "-v"], env=regression_env, timeout=60)
         report["parser_regressions"] = regressions
         require_success(regressions, "Synthetic parser regressions against the extracted release")
         regression_count = re.search(r"Ran (\d+) tests? in ([\d.]+)s", regressions["stdout"] + regressions["stderr"])
