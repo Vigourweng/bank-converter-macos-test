@@ -1,0 +1,86 @@
+name: Observe Finder-style quarantine behavior
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/mac-quarantine-diagnostic.yml'
+      - 'tests/run_quarantine_launch_check.py'
+
+permissions:
+  contents: read
+
+jobs:
+  quarantine-observation:
+    name: Mac quarantine / ${{ matrix.case }}
+    runs-on: macos-15
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [clean, quarantine0083, quarantine0087]
+    env:
+      PYTHON_BIN: /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14
+      PYTHONNOUSERSITE: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      BANK_DIAGNOSTIC_RUNNER_KIND: ${{ runner.environment }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install official Python only on this temporary GitHub Mac
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BANK_DIAGNOSTIC_RUNNER_KIND" != 'github-hosted' || "$RUNNER_OS" != 'macOS' ]]; then
+            echo 'This diagnostic refuses self-hosted runners and user computers.'
+            exit 1
+          fi
+          package="$RUNNER_TEMP/python-3.14.9-macos11.pkg"
+          /usr/bin/curl --fail --location --retry 2 --proto '=https' --tlsv1.2 \
+            'https://www.python.org/ftp/python/3.14.9/python-3.14.9-macos11.pkg' \
+            --output "$package"
+          printf '%s  %s\n' \
+            '08e312f20844b524c2f8c5e5b2e7f49608c22e8c7cb194f5834d385c94383462' \
+            "$package" | /usr/bin/shasum -a 256 -c -
+          sudo /usr/sbin/installer -pkg "$package" -target /
+
+      - name: Build the same reviewed release without packaging test assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PYTHON_BIN" -B build_release.py
+
+      - name: Observe the verified copy through LaunchServices without overriding security
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PYTHON_BIN" -X utf8 -B tests/run_quarantine_launch_check.py \
+            --package dist/bank-converter.zip \
+            --expected-package-sha256 babdc6f6e7271d50dc47a0e6a5ff250eb84927f083bcca96aa39af5d5b4dc567 \
+            --expected-launcher-sha256 e21b230a6f7c80bf224c3609dbac0b72ba6de08713334ec66211248bbcf4e41e \
+            --case '${{ matrix.case }}' \
+            --artifacts mac-quarantine-artifacts
+
+      - name: Summarize the observation without claiming a Gatekeeper pass
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f mac-quarantine-artifacts/summary.md ]]; then
+            cat mac-quarantine-artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' \
+              '## Quarantine observation did not produce a report' \
+              'This is inconclusive, not a successful reproduction or a Gatekeeper pass.' \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Preserve synthetic-run screenshots and read-only diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: quarantine-observation-${{ matrix.case }}
+          path: mac-quarantine-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
