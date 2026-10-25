@@ -10,6 +10,8 @@ where py >nul 2>nul
 if not errorlevel 1 goto python_launcher
 where python >nul 2>nul
 if not errorlevel 1 goto python_command
+set "BANK_PYTHON=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+if exist "%BANK_PYTHON%" goto bundled_python
 echo Install Python 3.10 or newer with tkinter from python.org, then try again.
 pause
 exit /b 1
@@ -18,6 +20,9 @@ py -3 -X utf8 -B "%~dp0bank_merge.py" %*
 goto finished
 :python_command
 python -X utf8 -B "%~dp0bank_merge.py" %*
+goto finished
+:bundled_python
+"%BANK_PYTHON%" -X utf8 -B "%~dp0bank_merge.py" %*
 :finished
 if errorlevel 1 pause
 endlocal
