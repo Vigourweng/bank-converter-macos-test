@@ -1,0 +1,86 @@
+name: macOS bank-tool release checks
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-checks:
+    name: macOS 15 / ${{ matrix.architecture }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            architecture: Apple Silicon
+          - os: macos-15-intel
+            architecture: Intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PYTHON_BIN: /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14
+      PYTHONNOUSERSITE: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install the official Python and bundled Tcl/Tk on this temporary runner
+        shell: bash
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_KIND" != "github-hosted" || "$RUNNER_OS" != "macOS" ]]; then
+            echo "Refusing installation: this step is only for a temporary GitHub-hosted Mac."
+            exit 1
+          fi
+          package="$RUNNER_TEMP/python-3.14.9-macos11.pkg"
+          /usr/bin/curl --fail --location --retry 2 --proto '=https' --tlsv1.2 \
+            'https://www.python.org/ftp/python/3.14.9/python-3.14.9-macos11.pkg' \
+            --output "$package"
+          printf '%s  %s\n' \
+            '08e312f20844b524c2f8c5e5b2e7f49608c22e8c7cb194f5834d385c94383462' \
+            "$package" | /usr/bin/shasum -a 256 -c -
+          sudo /usr/sbin/installer -pkg "$package" -target /
+          "$PYTHON_BIN" -c 'import sys, tkinter; print(sys.executable); print(sys.version); print("Tcl", tkinter.TclVersion, "Tk", tkinter.TkVersion)'
+
+      - name: Build a release containing application files only
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PYTHON_BIN" build_release.py
+
+      - name: Test the extracted release on real macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PYTHON_BIN" tests/run_release_checks.py \
+            --package dist/bank-converter.zip \
+            --artifacts mac-test-artifacts --require-macos --gui
+
+      - name: Show the report in the Actions run
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f mac-test-artifacts/summary.md ]]; then
+            cat mac-test-artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' \
+              '## macOS validation did not finish' \
+              'The release tests did not produce a report. Check the installation or build step above; this is not a passing Mac result.' \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Collect synthetic test reports and available window screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mac-test-${{ matrix.os }}
+          path: mac-test-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
