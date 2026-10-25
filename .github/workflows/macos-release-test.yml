@@ -2,6 +2,9 @@ name: macOS bank-tool release checks
 
 on:
   push:
+    paths-ignore:
+      - '.github/workflows/mac-quarantine-diagnostic.yml'
+      - 'tests/run_quarantine_launch_check.py'
   workflow_dispatch:
 
 permissions:

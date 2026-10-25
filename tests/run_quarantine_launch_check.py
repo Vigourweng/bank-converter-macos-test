@@ -106,11 +106,9 @@ def main():
         report['file_manifest_before'] = original
         report['gatekeeper_status_before'] = command(['/usr/sbin/spctl', '--status'])
         report['xattrs_before'] = command(['/usr/bin/xattr', '-l', launcher])
-        try:
-            existing = os.getxattr(launcher, 'com.apple.quarantine')
-        except OSError:
-            existing = None
-        assert existing is None, 'Fresh copy unexpectedly has quarantine; refusing to clear it'
+        attribute_names = command(['/usr/bin/xattr', launcher])
+        required(attribute_names, 'Read original extended attribute names')
+        assert 'com.apple.quarantine' not in attribute_names['stdout'].splitlines(), 'Fresh copy unexpectedly has quarantine; refusing to clear it'
         if args.case != 'clean':
             flags = args.case.removeprefix('quarantine')
             value = f'{flags};{int(time.time()):x};{AGENT};{str(uuid.uuid4()).upper()}'
@@ -118,7 +116,9 @@ def main():
             # copy. It never clears an attribute or pretends to be Lark.
             addition = command(['/usr/bin/xattr', '-w', 'com.apple.quarantine', value, launcher])
             required(addition, 'Adding synthetic quarantine to disposable launcher')
-            actual = os.getxattr(launcher, 'com.apple.quarantine').decode('utf-8')
+            readback = command(['/usr/bin/xattr', '-p', 'com.apple.quarantine', launcher])
+            required(readback, 'Read back synthetic quarantine')
+            actual = readback['stdout'].rstrip('\n')
             assert actual == value, 'Synthetic quarantine was not preserved'
             report['quarantine_written'] = actual
         else:
