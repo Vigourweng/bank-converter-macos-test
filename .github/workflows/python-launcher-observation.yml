@@ -1,4 +1,4 @@
-name: Python Launcher without Terminal observation
+name: v5.3 Mac source launcher checks
 
 on:
   workflow_dispatch:
@@ -7,19 +7,24 @@ on:
       - '.github/workflows/python-launcher-observation.yml'
       - 'tests/run_python_launcher_check.py'
       - 'tests/start_mac.pyw'
+      - 'start_mac.pyw'
 
 permissions:
   contents: read
 
 jobs:
   launcher-observation:
-    name: Python Launcher without Terminal / ${{ matrix.case }}
-    runs-on: macos-15
+    name: ${{ matrix.arch }} / ${{ matrix.case }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        case: [clean, quarantine0083, quarantine0087]
+        include:
+          - {os: macos-15, arch: AppleSilicon, case: clean, extra: '--capture-preferences'}
+          - {os: macos-15, arch: AppleSilicon, case: quarantine0083, extra: ''}
+          - {os: macos-15, arch: AppleSilicon, case: quarantine0087, extra: ''}
+          - {os: macos-15-intel, arch: Intel, case: quarantine0087, extra: ''}
     env:
       PYTHONNOUSERSITE: '1'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -51,7 +56,7 @@ jobs:
           /usr/sbin/spctl --assess --type install --verbose=4 "$package" 2>&1 | tee python-launcher-artifacts/installer-gatekeeper.txt
           sudo /usr/sbin/installer -pkg "$package" -target / 2>&1 | tee python-launcher-artifacts/installer-output.txt
 
-      - name: Build the reviewed v5.2 release using the runner system Python
+      - name: Build the reviewed v5.3 release using the runner system Python
         shell: bash
         run: |
           set -euo pipefail
@@ -65,11 +70,12 @@ jobs:
           set -euo pipefail
           /usr/bin/python3 -X utf8 -B tests/run_python_launcher_check.py \
             --package dist/bank-converter.zip \
-            --expected-package-sha256 babdc6f6e7271d50dc47a0e6a5ff250eb84927f083bcca96aa39af5d5b4dc567 \
+            --expected-package-sha256 7c309ed3868e1e4957cbbfda5995179285021569ea713974617f72e720b006af \
             --wrapper tests/start_mac.pyw \
             --expected-wrapper-sha256 5b2dd17225d7c5583b5c29a09aa42da567248be9dd17230112d9447b9f6ea90f \
             --case '${{ matrix.case }}' \
             --without-terminal \
+            --skip-file-binding-reminder ${{ matrix.extra }} \
             --artifacts python-launcher-artifacts/observation
 
       - name: Record observation scope without claiming a successful application launch
@@ -89,7 +95,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: python-launcher-without-terminal-${{ matrix.case }}
+          name: v53-source-launcher-${{ matrix.arch }}-${{ matrix.case }}
           path: python-launcher-artifacts/
           if-no-files-found: warn
           retention-days: 7

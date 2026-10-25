@@ -567,7 +567,7 @@ def gui():
     from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
-    root.title('银行流水合并工具 v5.2')
+    root.title('银行流水合并工具 v5.3')
     root.geometry('1020x730')
     root.minsize(950, 650)
     frame = ttk.Frame(root, padding=22)
@@ -702,7 +702,7 @@ def gui():
             messagebox.showerror('无法打开支持范围', '没有找到支持范围说明。请保留完整工具文件夹后重试。', parent=root)
             return
         window = tk.Toplevel(root)
-        window.title('支持范围 · 银行流水工具 v5.2')
+        window.title('支持范围 · 银行流水工具 v5.3')
         window.geometry('960x720')
         window.minsize(740, 520)
         window.transient(root)

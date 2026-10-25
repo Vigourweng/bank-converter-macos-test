@@ -61,7 +61,7 @@ jobs:
           set -euo pipefail
           "$PYTHON_BIN" -X utf8 -B tests/run_quarantine_launch_check.py \
             --package dist/bank-converter.zip \
-            --expected-package-sha256 babdc6f6e7271d50dc47a0e6a5ff250eb84927f083bcca96aa39af5d5b4dc567 \
+            --expected-package-sha256 7c309ed3868e1e4957cbbfda5995179285021569ea713974617f72e720b006af \
             --expected-launcher-sha256 e21b230a6f7c80bf224c3609dbac0b72ba6de08713334ec66211248bbcf4e41e \
             --case '${{ matrix.case }}' \
             --artifacts mac-quarantine-artifacts

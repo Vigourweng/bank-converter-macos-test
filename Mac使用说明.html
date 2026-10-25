@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Mac 使用说明 · 银行流水合并工具 v5.3</title>
+<style>
+body{font:17px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#243346;background:#f3f6f8;margin:0}main{max-width:780px;margin:30px auto;padding:30px 36px;background:white;border-radius:12px}h1{font-size:28px;color:#174461}h2{font-size:21px;margin-top:30px}li{margin:18px 0}a{color:#075e9c}code{background:#edf3f7;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}.note{background:#edf6fb;padding:14px 18px;border-left:4px solid #397da5}.small{font-size:14px;color:#536375}@media(max-width:600px){main{margin:0;padding:22px;border-radius:0}ol{padding-left:23px}}
+</style>
+</head>
+<body><main>
+<h1>Mac 使用说明 · v5.3</h1>
+<p>推荐用 <strong>start_mac.pyw</strong> 打开银行流水合并工具。这份说明可离线阅读，下载 Python 和查看测试记录时才需要联网。</p>
+<h2>按这四步操作</h2>
+<ol>
+<li><strong>安装 Python，解压完整工具。</strong><br>下载并安装官方 <a href="https://www.python.org/ftp/python/3.13.17/python-3.13.17-macos11.pkg">Python 3.13.17 Mac 安装包</a>，内含 PythonLauncher 和 tkinter。解压完整的工具文件夹；<code>start_mac.pyw</code>、<code>bank_merge.py</code>、其他程序文件和 <code>vendor</code> 要放在一起。</li>
+<li><strong>先设置一次 PythonLauncher。</strong><br>在 Finder 打开 <strong>应用程序 → Python 3.13 → PythonLauncher</strong> 本身，先不要打开脚本。名称也可能显示为 <strong>Python Launcher</strong>。打开 <strong>Preferences（偏好设置）</strong>，文件类型选 <strong>Python Script</strong>，取消勾选 <strong>Terminal 窗口选项（Run in a Terminal window）</strong>。关闭偏好设置，再退出 PythonLauncher 保存设置。这也会影响它打开的其他同类脚本。</li>
+<li><strong>打开 start_mac.pyw。</strong><br>回到工具文件夹，右键 <code>start_mac.pyw</code>，选 <strong>打开方式 → PythonLauncher</strong>。若没有列出，选 <strong>其他…</strong>，到 <strong>应用程序 → Python 3.13</strong> 中选择。若出现文件类型或默认打开程序的提醒，点 <strong>OK</strong>；本次实测中这是普通提醒，之后显示银行工具窗口。</li>
+<li><strong>以后这样使用。</strong><br>以后按相同方式打开。也可选中文件，在 <strong>显示简介 → 打开方式</strong> 中选 PythonLauncher，记住打开程序。进入工具后，选择原始流水，查看格式检查，再点击“校验并生成”。陌生表头可用“设置列对应”；“支持范围”可离线查看格式和限制。</li>
+</ol>
+<p class="note">旧的 <code>start_mac.command</code> 仍保留，但某些下载副本可能继续被阻止。请使用 <code>start_mac.pyw</code>。复制、移动或发给同事时，请保留完整工具文件夹。</p>
+<h2>IQ 输出规则</h2>
+<p><strong>表头 → 月初日期 → 所有交易 → 月末日期。</strong>首尾日期行的其余六列留空，不计入笔数和金额。金额正负号、内部转账和疑似重复交易均保留；缺少完整期初期末余额时会明确提示。QIF 的日期设置单独默认为 AUTO；FNB 官方 QIF 使用 MDY，需核对来源后再选择。</p>
+<h2>实测到了哪一步？</h2>
+<p><a href="https://github.com/Vigourweng/bank-converter-macos-test/actions/runs/40195756629">Mac 原生启动实测 40195756629</a> 使用 Python 3.13.17，关闭了 Terminal 启动选项。在无隔离属性、人工设置 <code>0083</code> 和人工设置 <code>0087</code> 三种情况下，都显示银行工具窗口，出现普通文件类型提醒，未出现“已损坏”提示。</p>
+<p><a href="https://github.com/Vigourweng/bank-converter-macos-test/actions/runs/40195406500">默认设置实验 40195406500</a> 停在 macOS 请求控制 Terminal 的权限提示，因此采用上面的普通偏好设置启动。</p>
+<p>这<strong>不是对你实际从 Lark 或浏览器下载的文件进行的测试</strong>，不能保证所有 Mac 和下载副本都相同。若仍打不开，请保留提示原文，并确认打开的是 <code>start_mac.pyw</code>。</p>
+<p class="small">公开仓库只使用虚构数据。真实流水、账号、客户资料和生成结果请留在本地。</p>
+</main></body>
+</html>

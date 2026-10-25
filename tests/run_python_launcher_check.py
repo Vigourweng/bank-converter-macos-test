@@ -12,6 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import plistlib
+import signal
 import stat
 import subprocess
 import sys
@@ -25,11 +26,12 @@ SCRIPT_FACTORY_KEY = 'Python Script'
 LIMITS = [
     'These are synthetic quarantine inputs, not an actual Lark or browser download.',
     'Each case uses a fresh GitHub-hosted macOS runner. No personal account or data is used.',
-    'The candidate is the reviewed v5.2 release plus the unchanged tiny start_mac.pyw wrapper.',
+    'The candidate preserves the reviewed release bytes and uses the exact reviewed start_mac.pyw, either already included or added once by this experiment.',
     'LaunchServices opens the document explicitly with official Python Launcher.app, equivalent to Open With, not a literal Finder double-click.',
     'A normal user may need to choose Open With > Python Launcher once, or set that file association. This experiment does not set associations.',
     'Python Launcher may request ordinary permission to control Terminal. No permission is pregranted or accepted in this experiment.',
     'With --without-terminal, only the normal Python Launcher Python Script/with_terminal presentation preference is set to false before first launch. The default experiment remains available without that flag.',
+    'With --skip-file-binding-reminder, the normal Python Launcher SkipFileBindingTest reminder preference is set to true. No actual file association is created or changed.',
     'A zero exit status for open means a request was accepted, not that Gatekeeper approved it or the bank window opened.',
     'Screenshots require visual review. A completed CI job is evidence collection, not a compatibility or security pass.',
     'No quarantine attribute is removed, no Gatekeeper setting changes, and no warning or permission dialog is clicked.',
@@ -87,7 +89,7 @@ def processes(app_dir):
     return observed
 
 
-def configure_launcher_presentation(out, report):
+def configure_launcher_presentation(out, report, *, without_terminal=True, skip_file_binding_reminder=False):
     """Set an ordinary app preference, never a privacy or security permission."""
     bundle = plistlib.loads((LAUNCHER_APP / 'Contents/Info.plist').read_bytes())
     assert bundle.get('CFBundleIdentifier') == LAUNCHER_DOMAIN, 'Unexpected preference domain'
@@ -97,10 +99,19 @@ def configure_launcher_presentation(out, report):
     before = command(['/usr/bin/defaults', 'export', LAUNCHER_DOMAIN, '-'])
     report['launcher_presentation_preference'] = dict(
         changed=False, domain=LAUNCHER_DOMAIN, factoryKey=SCRIPT_FACTORY_KEY,
-        preference='with_terminal', requested_value=False,
+        preference='with_terminal', requested_value=False if without_terminal else None,
+        file_binding_reminder_preference='SkipFileBindingTest',
+        file_binding_reminder_requested_value=True if skip_file_binding_reminder else None,
+        actual_file_association_changed=False,
         scope='Normal application presentation preference only; no TCC or security settings changed.',
         export_before=before)
-    settings = {SCRIPT_FACTORY_KEY: {'with_terminal': False}}
+    settings = {}
+    if without_terminal:
+        settings[SCRIPT_FACTORY_KEY] = {'with_terminal': False}
+    if skip_file_binding_reminder:
+        settings['SkipFileBindingTest'] = True
+    assert settings, 'No normal app preference was requested'
+    report['launcher_presentation_preference']['settings_requested'] = settings
     preference_file = out / 'python-launcher-presentation.plist'
     preference_file.write_bytes(plistlib.dumps(settings, fmt=plistlib.FMT_XML, sort_keys=True))
     imported = command(['/usr/bin/defaults', 'import', LAUNCHER_DOMAIN, preference_file])
@@ -111,9 +122,14 @@ def configure_launcher_presentation(out, report):
     report['launcher_presentation_preference']['export_after'] = exported
     required(exported, 'Read back ordinary Python Launcher preference')
     readback = plistlib.loads(exported['stdout'].encode('utf-8'))
-    selected = readback.get(SCRIPT_FACTORY_KEY, {}).get('with_terminal')
-    assert selected is False, 'Python Script/with_terminal did not read back as boolean false'
-    report['launcher_presentation_preference']['verified_value'] = selected
+    if without_terminal:
+        selected = readback.get(SCRIPT_FACTORY_KEY, {}).get('with_terminal')
+        assert selected is False, 'Python Script/with_terminal did not read back as boolean false'
+        report['launcher_presentation_preference']['verified_value'] = selected
+    if skip_file_binding_reminder:
+        selected = readback.get('SkipFileBindingTest')
+        assert selected is True, 'SkipFileBindingTest did not read back as boolean true'
+        report['launcher_presentation_preference']['file_binding_reminder_verified_value'] = selected
 
 
 def capture(path, started, target):
@@ -152,6 +168,56 @@ def finish_capture(record, started):
             record['_requested_monotonic'] = requested
 
 
+def capture_preferences_ui(out, report):
+    """Observe normal Preferences, then stop only that verified app process."""
+    record = dict(pre_document_app_launch_performed=True,
+                  limitation='This optional preflight opens the app once before the document experiment.')
+    report['preferences_ui_preflight'] = record
+    record['open_request'] = command(['/usr/bin/open', '-a', LAUNCHER_APP], timeout=10)
+    required(record['open_request'], 'Open ordinary Python Launcher Preferences')
+    started = time.monotonic()
+    time.sleep(2)
+    screen = capture(out / 'launcher-preferences.png', started, 2)
+    record['screenshot'] = screen
+    try:
+        while '_process' in screen:
+            finish_capture(screen, started)
+            if '_process' in screen:
+                time.sleep(0.1)
+    finally:
+        pending = screen.pop('_process', None)
+        screen.pop('_requested_monotonic', None)
+        if pending is not None:
+            pending.kill()
+            pending.communicate(timeout=3)
+    screen['file_created'] = (out / screen['file']).is_file()
+    observed = command(['/bin/ps', '-ww', '-axo', 'pid=,comm='])
+    required(observed, 'Identify exact Python Launcher process')
+    executable = str(LAUNCHER_APP / 'Contents/MacOS/Python Launcher')
+    matches = []
+    for line in observed['stdout'].splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[1] == executable:
+            matches.append(int(parts[0]))
+    record['verified_launcher_pids'] = matches
+    assert len(matches) == 1, 'Cannot uniquely verify Python Launcher process; refusing to terminate anything'
+    pid = matches[0]
+    confirmed = command(['/bin/ps', '-ww', '-p', pid, '-o', 'comm='])
+    record['process_identity_before_termination'] = confirmed
+    required(confirmed, 'Reverify exact app identity before closing Preferences')
+    assert confirmed['stdout'].strip() == executable, 'Process identity changed; refusing termination'
+    os.kill(pid, signal.SIGTERM)
+    record['termination_signal'] = 'SIGTERM sent only to the verified Python Launcher process'
+    deadline = time.monotonic()+5
+    while time.monotonic() < deadline:
+        remaining = command(['/bin/ps', '-ww', '-p', pid, '-o', 'comm='])
+        if remaining.get('returncode') == 1:
+            record['launcher_stopped_before_document_open'] = True
+            return
+        time.sleep(0.2)
+    raise RuntimeError('Python Launcher did not stop after Preferences capture; document launch not attempted')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', type=Path, required=True)
@@ -162,7 +228,13 @@ def main():
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--without-terminal', action='store_true',
                         help='Set only Python Launcher Python Script/with_terminal=false before first open')
+    parser.add_argument('--skip-file-binding-reminder', action='store_true',
+                        help='Set only the normal SkipFileBindingTest reminder preference; does not change associations')
+    parser.add_argument('--capture-preferences', action='store_true',
+                        help='Capture the normal app Preferences before document open; requires --skip-file-binding-reminder')
     args = parser.parse_args()
+    if args.capture_preferences and not args.skip_file_binding_reminder:
+        parser.error('--capture-preferences requires --skip-file-binding-reminder to avoid an ordinary reminder')
     if (sys.platform != 'darwin' or os.environ.get('GITHUB_ACTIONS') != 'true'
             or os.environ.get('BANK_PY_LAUNCHER_RUNNER_KIND') != 'github-hosted'
             or os.environ.get('RUNNER_OS') != 'macOS'):
@@ -173,6 +245,7 @@ def main():
                   platform=platform.platform(), architecture=platform.machine(),
                   limitations=LIMITS, screenshots=[], result='incomplete',
                   presentation_mode='without_terminal' if args.without_terminal else 'factory_defaults',
+                  file_binding_reminder_mode='skip_normal_reminder' if args.skip_file_binding_reminder else 'factory_defaults',
                   launcher_presentation_preference=dict(changed=False, factoryKey=SCRIPT_FACTORY_KEY,
                                                         preference='with_terminal'))
     exit_code = 1
@@ -184,6 +257,7 @@ def main():
         assert report['release_sha256'] == args.expected_package_sha256.lower(), 'Unreviewed release hash'
         assert report['wrapper_sha256'] == args.expected_wrapper_sha256.lower(), 'Unreviewed wrapper hash'
         expected = {}
+        wrapper_in_release = False
         candidate_zip = out / '银行工具 下载候选.zip'
         with ZipFile(package) as source, ZipFile(candidate_zip, 'w', compression=ZIP_DEFLATED) as candidate:
             assert source.testzip() is None, 'Invalid release CRC'
@@ -194,14 +268,20 @@ def main():
                 assert not name.is_absolute() and '..' not in name.parts and '\\' not in item.filename
                 assert not item.is_dir() and stat.S_ISREG(item.external_attr >> 16), 'Only regular files allowed'
                 data = source.read(item)
+                if item.filename == 'bank_converter/start_mac.pyw':
+                    assert hashlib.sha256(data).hexdigest() == report['wrapper_sha256'], 'Released wrapper differs from reviewed wrapper'
+                    wrapper_in_release = True
                 expected[str(PurePosixPath(*name.parts[1:]))] = hashlib.sha256(data).hexdigest()
                 candidate.writestr(item, data)
-            entry = ZipInfo('bank_converter/start_mac.pyw', date_time=(2026, 1, 1, 0, 0, 0))
-            entry.create_system = 3
-            entry.external_attr = (stat.S_IFREG | 0o644) << 16
-            entry.compress_type = ZIP_DEFLATED
-            candidate.writestr(entry, wrapper.read_bytes())
-            expected['start_mac.pyw'] = sha(wrapper)
+            if not wrapper_in_release:
+                entry = ZipInfo('bank_converter/start_mac.pyw', date_time=(2026, 1, 1, 0, 0, 0))
+                entry.create_system = 3
+                entry.external_attr = (stat.S_IFREG | 0o644) << 16
+                entry.compress_type = ZIP_DEFLATED
+                candidate.writestr(entry, wrapper.read_bytes())
+                expected['start_mac.pyw'] = sha(wrapper)
+        report['release_contains_wrapper'] = wrapper_in_release
+        report['candidate_wrapper_origin'] = 'reviewed_release' if wrapper_in_release else 'added_once_by_experiment'
         report['candidate_archive_sha256'] = sha(candidate_zip)
         report['archive_xattrs_initial'] = xattrs(candidate_zip)
         assert quarantine(candidate_zip) is None, 'Unexpected initial quarantine; refusing to remove it'
@@ -238,6 +318,11 @@ def main():
         report['macos_version'] = command(['/usr/bin/sw_vers'])
         report['gatekeeper_status_before'] = command(['/usr/sbin/spctl', '--status'])
         report['launcher_signature_details'] = command(['/usr/bin/codesign', '-dv', '--verbose=4', LAUNCHER_APP])
+        factory_file = LAUNCHER_APP / 'Contents/Resources/factorySettings.plist'
+        report['installed_launcher_factory_settings_sha256'] = sha(factory_file)
+        report['installed_launcher_factory_settings'] = plistlib.loads(factory_file.read_bytes())
+        report['installed_launcher_document_types'] = plistlib.loads(
+            (LAUNCHER_APP / 'Contents/Info.plist').read_bytes()).get('CFBundleDocumentTypes', [])
         report['launcher_signature_verify'] = command(['/usr/bin/codesign', '--verify', '--deep', '--strict', '--verbose=2', LAUNCHER_APP])
         required(report['launcher_signature_verify'], 'Official Python Launcher signature verification')
         details = report['launcher_signature_details'].get('stderr', '')
@@ -246,8 +331,11 @@ def main():
         required(report['launcher_gatekeeper_assessment'], 'Official Python Launcher Gatekeeper assessment')
         report['launcher_xattrs_before'] = xattrs(LAUNCHER_APP)
         report['processes_before'] = processes(app_dir)
-        if args.without_terminal:
-            configure_launcher_presentation(out, report)
+        if args.without_terminal or args.skip_file_binding_reminder:
+            configure_launcher_presentation(out, report, without_terminal=args.without_terminal,
+                                             skip_file_binding_reminder=args.skip_file_binding_reminder)
+        if args.capture_preferences:
+            capture_preferences_ui(out, report)
         report['launch_argv'] = ['/usr/bin/open', '-a', str(LAUNCHER_APP), str(document)]
         opened_stdout = out / 'open-stdout.txt'
         opened_stderr = out / 'open-stderr.txt'
@@ -312,6 +400,7 @@ def main():
                  '**Job completion records observations. It does not prove the bank app opened or security checks passed.**', '',
                  '- Case: `{}`'.format(args.case), '- Result: `{}`'.format(report['result']),
                  '- Presentation mode: `{}`'.format(report['presentation_mode']),
+                 '- File-binding reminder mode: `{}`; actual file associations are not changed.'.format(report['file_binding_reminder_mode']),
                  '- Normal app preference changed: `{}` (factoryKey `Python Script`, preference `with_terminal`).'.format(
                      report['launcher_presentation_preference']['changed']),
                  '- Architecture: `{}`'.format(report['architecture']),

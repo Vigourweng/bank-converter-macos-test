@@ -5,6 +5,11 @@ on:
     paths-ignore:
       - '.github/workflows/mac-quarantine-diagnostic.yml'
       - 'tests/run_quarantine_launch_check.py'
+      - '.github/workflows/python-launcher-observation.yml'
+      - 'tests/run_python_launcher_check.py'
+      - 'tests/start_mac.pyw'
+      - '.github/workflows/lark-macos-preflight.yml'
+      - 'tests/run_lark_preflight.py'
   workflow_dispatch:
 
 permissions:
