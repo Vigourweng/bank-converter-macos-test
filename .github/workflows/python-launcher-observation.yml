@@ -1,4 +1,4 @@
-name: v5.3 Mac source launcher checks
+name: v5.4 Mac source launcher checks
 
 on:
   workflow_dispatch:
@@ -56,7 +56,7 @@ jobs:
           /usr/sbin/spctl --assess --type install --verbose=4 "$package" 2>&1 | tee python-launcher-artifacts/installer-gatekeeper.txt
           sudo /usr/sbin/installer -pkg "$package" -target / 2>&1 | tee python-launcher-artifacts/installer-output.txt
 
-      - name: Build the reviewed v5.3 release using the runner system Python
+      - name: Build the reviewed v5.4 release using the runner system Python
         shell: bash
         run: |
           set -euo pipefail
@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           /usr/bin/python3 -X utf8 -B tests/run_python_launcher_check.py \
             --package dist/bank-converter.zip \
-            --expected-package-sha256 7c309ed3868e1e4957cbbfda5995179285021569ea713974617f72e720b006af \
+            --expected-package-sha256 cbf1a26a25d1a71dd13ccb724920a096e5dae5edc11a04b392cd99996e1a79d3 \
             --wrapper tests/start_mac.pyw \
             --expected-wrapper-sha256 5b2dd17225d7c5583b5c29a09aa42da567248be9dd17230112d9447b9f6ea90f \
             --case '${{ matrix.case }}' \
@@ -95,7 +95,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: v53-source-launcher-${{ matrix.arch }}-${{ matrix.case }}
+          name: v54-source-launcher-${{ matrix.arch }}-${{ matrix.case }}
           path: python-launcher-artifacts/
           if-no-files-found: warn
           retention-days: 7

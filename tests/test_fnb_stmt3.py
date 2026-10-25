@@ -11,6 +11,7 @@ import unittest
 ROOT = Path(os.environ.get('BANK_TOOL_ROOT', Path(__file__).resolve().parents[1])).resolve()
 sys.path.insert(0, str(ROOT))
 import bank_formats as fmt
+import bank_merge as bank
 
 
 ACCOUNT = '0000000000000123'
@@ -91,6 +92,16 @@ class FnbStmt3Tests(unittest.TestCase):
         self.assertEqual(summary['net'], '150.00')
         self.assertEqual(summary['balance_difference'], '0.00')
         self.assertEqual(summary['segments_checked'], 1)
+
+    def test_write_result_exports_stmt3_without_report_fee_key_error(self):
+        source = self.write()
+        transactions, report = bank.prepare(files=[source])
+        destination = bank.write_result(transactions, report, self.folder / 'generated')
+        self.assertTrue((destination / 'ERP_import_2026-09.csv').is_file())
+        self.assertTrue((destination / 'ERP_import_2026-09.xlsx').is_file())
+        self.assertEqual(report['net'], '150.00')
+        self.assertIn('应计服务费控制合计 -3.00',
+                      (destination / '校验报告.txt').read_text(encoding='utf-8-sig'))
 
     def test_accrued_service_fee_warns_without_changing_amount(self):
         entries, summary = self.parse()

@@ -14,6 +14,8 @@ import os
 import subprocess
 import sys
 import re
+import zipfile
+from xml.etree import ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +23,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from itertools import zip_longest
 import bank_formats
+import bank_xlsx
 
 RULES_PATH = Path(__file__).resolve().with_name('format_rules.json')
 UI_FONT = 'Helvetica' if sys.platform == 'darwin' else 'Microsoft YaHei UI'
@@ -100,7 +103,10 @@ def parse_source(path: Path, *, profiles=None, date_order='DMY', qif_date_order=
     path = Path(path)
     if path.suffix.lower() in ('.xls','.xlsx'):
         try: tables = bank_formats.load_tables(path)
-        except (bank_formats.FormatError,ValueError) as exc: raise InputError(str(exc)) from exc
+        except (bank_formats.FormatError,ValueError,zipfile.BadZipFile,ET.ParseError,KeyError,IndexError,OverflowError) as exc:
+            raise InputError(f'{path.name}：无法读取 Excel 文件：{exc}') from exc
+        if any(next((row for row in rows if any(c.strip() for c in row)), [])[:7] == HEADER for _, rows in tables):
+            raise InputError(f'{path.name}：这是 IQ 导入成品，不应再次当作原始银行流水合并')
         if len(tables)==1:
             rows=tables[0][1]
             nonempty=[r for r in rows if any(c.strip() for c in r)]
@@ -384,6 +390,14 @@ def choose_sources(input_folder: Path | None = None, files=None, reference: Path
             if path.suffix.lower() in ('.csv','.tsv'):
                 rows, _, _ = read_csv(path)
                 first = next((row for row in rows if any(c.strip() for c in row)), [])
+            elif path.suffix.lower() in ('.xls','.xlsx'):
+                try:
+                    tables = bank_formats.load_tables(path)
+                except (bank_formats.FormatError,ValueError,zipfile.BadZipFile,ET.ParseError,KeyError,IndexError,OverflowError) as exc:
+                    raise InputError(f'{path.name}：无法读取 Excel 文件：{exc}') from exc
+                if any(next((row for row in rows if any(c.strip() for c in row)), [])[:7] == HEADER for _, rows in tables):
+                    skipped.append(path.name)
+                    continue
             if (reference and path.resolve() == reference.expanduser().resolve()) or first[:7] == HEADER or first[:2] in (['ERP行号', '来源文件'],['交易位置','字段']):
                 skipped.append(path.name)
                 continue
@@ -496,9 +510,17 @@ def write_result(transactions, report, output_root: Path):
     destination = output_root / run_name
     destination.mkdir(parents=True, exist_ok=False)
     import_name = f"ERP_import_{report['period']}.csv"
+    xlsx_name = f"ERP_import_{report['period']}.xlsx"
     expected = import_rows(transactions, report['period'])
     report = dict(report, month_boundary_rows={'first': expected[1][0], 'last': expected[-1][0],
-                                              'other_columns': 'blank', 'counted_as_transactions': False})
+                                              'other_columns': 'blank', 'counted_as_transactions': False},
+                  generated_files={'csv': import_name, 'xlsx': xlsx_name},
+                  date_output={'csv': 'DD/MM/YYYY plain dates, unchanged IQ import layout',
+                               'xlsx': 'DATE(year,month,day) formulas with cached Excel 1900 serials and dd/mm/yyyy display'})
+    try:
+        bank_xlsx.write_import_xlsx(destination / xlsx_name, expected)
+    except bank_xlsx.XlsxExportError as exc:
+        raise InputError(str(exc)) from exc
     write_csv(destination / import_name, expected)
     audit_rows = [['ERP行号', '来源文件', '原始行号', '账户编号', '日期', '金额', '说明', '参考号']]
     for n, t in enumerate(transactions, 3):
@@ -519,6 +541,8 @@ def write_result(transactions, report, output_root: Path):
               '月初和月末各一行，除日期外其余六列留空；这两行不计入交易笔数和金额合计。',
               '文件顺序：' + ' → '.join(s['file'] for s in report['sources']) + '；各文件内保持原序。',
               '日期：DD/MM/YYYY；金额为精确两位小数；说明及参考号原样保留。',
+              f'生成文件：{import_name}（IQ 原有纯日期 CSV）和 {xlsx_name}（日期公式 Excel）。',
+              'Excel 的全部日期（含月初、月末）使用 DATE(年,月,日) 公式并保存日期缓存，显示格式为 dd/mm/yyyy；说明和参考号按文字保存。',
               'SERVICE FEE、Balance、CHEQUE NUMBER 按成品格式留空。',
               '内部转账两边全部保留，不相互抵消，不自动去重。',
               '本工具不执行 ERP 导入，也不修改原始文件。']
@@ -529,9 +553,12 @@ def write_result(transactions, report, output_root: Path):
             lines.append(f"识别格式：{source['file']} — {source['format']}")
         if source.get('segments'):
             lines.append(f"分段校验：{source['file']} 共 {len(source['segments'])} 段，各段余额及前后衔接均核平。")
-            lines.append('费用控制列合计 ' + source['fee_control_total'] + '，不重复叠加到交易金额。')
+            if 'fee_control_total' in source:
+                lines.append('费用控制列合计 ' + source['fee_control_total'] + '，不重复叠加到交易金额。')
+            elif 'accrued_service_fee_control' in source:
+                lines.append('应计服务费控制合计 ' + source['accrued_service_fee_control'] + '，仅供核查，不重复叠加到交易金额。')
     if report.get('skipped_csv_files'):
-        lines += ['', '文件夹中已排除的成品或来源追踪 CSV：' + '、'.join(report['skipped_csv_files'])]
+        lines += ['', '文件夹中已排除的成品或来源追踪文件：' + '、'.join(report['skipped_csv_files'])]
     comparison = report['reference_comparison']
     if comparison:
         lines += ['', f"对照成品：{comparison['file']}",
@@ -567,7 +594,7 @@ def gui():
     from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
-    root.title('银行流水合并工具 v5.3')
+    root.title('银行流水合并工具 v5.4')
     root.geometry('1020x730')
     root.minsize(950, 650)
     frame = ttk.Frame(root, padding=22)
@@ -702,7 +729,7 @@ def gui():
             messagebox.showerror('无法打开支持范围', '没有找到支持范围说明。请保留完整工具文件夹后重试。', parent=root)
             return
         window = tk.Toplevel(root)
-        window.title('支持范围 · 银行流水工具 v5.3')
+        window.title('支持范围 · 银行流水工具 v5.4')
         window.geometry('960x720')
         window.minsize(740, 520)
         window.transient(root)

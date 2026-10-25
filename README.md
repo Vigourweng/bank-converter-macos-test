@@ -1,4 +1,4 @@
-# Bank statement converter v5.3
+# Bank statement converter v5.4
 
 This local tool combines supported statement files into an IQ import CSV. This public repository contains application code and fictional test data. **Keep real statements, customer information, personal paths, mapping rules and generated results outside this repository.**
 
@@ -39,6 +39,8 @@ The import file has seven columns: `Date`, `SERVICE FEE`, `Amount`, `DESCRIPTION
 
 Its order is **header → first calendar day of the month → all transactions → last calendar day of the month**. The other six fields in both boundary rows are blank. Boundary rows do not count as transactions or affect totals. Amount signs, internal transfers and suspected duplicates are preserved. Sources are processed in alphabetical filename order, preserving each file's row order.
 
+Each run also creates `ERP_import_YYYY-MM.xlsx` beside the unchanged IQ CSV. Every date in the workbook, including the two boundary rows, uses a `DATE(year,month,day)` formula with a saved numeric result and the explicit display format `dd/mm/yyyy`. Amounts are numeric with two decimals; descriptions and references remain literal text, including leading zeros and text beginning with `=`, `+`, `-` or `@`. The workbook has the same seven columns and row order. Use the CSV for the existing IQ import workflow. Export stops clearly if a value cannot be preserved in Excel, such as an invalid control character, a date before 1900 or an amount beyond Excel's 15 significant-digit precision; it does not silently change those values. Generated CSV/XLSX imports are excluded from original-statement selection by their actual header.
+
 Command-line use remains available: `python3 bank_merge.py --files path/to/statement.csv --output results`.
 
 ## Building and third-party software
@@ -49,7 +51,7 @@ The XLS reader is xlrd 2.0.2. Its notices and full license are retained in `vend
 
 ## 中文说明
 
-这是银行流水合并工具 **v5.3** 的公开测试仓库，只使用程序和虚构测试数据。真实流水、客户资料、个人路径、自定义规则和生成结果应留在本地。
+这是银行流水合并工具 **v5.4** 的公开测试仓库，只使用程序和虚构测试数据。真实流水、客户资料、个人路径、自定义规则和生成结果应留在本地。
 
 ### Mac 第一次使用
 
@@ -60,7 +62,7 @@ The XLS reader is xlrd 2.0.2. Its notices and full license are retained in `vend
 3. 右键 **`start_mac.pyw` → 打开方式 → PythonLauncher**。若没有列出，选 **其他…**，到 **应用程序 → Python 3.13** 中选择。若出现文件类型或默认打开程序的提醒，点 **OK**；本次实测中这是普通提醒，之后显示银行工具窗口。
 4. 以后用相同方式打开。也可在 Finder 选中文件，打开 **显示简介 → 打开方式 → PythonLauncher**，记住打开程序。
 
-旧的 `start_mac.command` 仍保留，但某些下载副本可能继续被阻止；请使用上面的 `.pyw` 入口。v5.3 只增加启动方式和说明，流水解析及 IQ 规则保持一致。
+旧的 `start_mac.command` 仍保留，但某些下载副本可能继续被阻止；请使用上面的 `.pyw` 入口。v5.4 保留同样的启动方式，新增 Excel 日期公式副本；流水解析及 IQ CSV 规则保持一致。
 
 ### 实测结果与限制
 
@@ -77,3 +79,5 @@ Windows 安装 Python 3.10 或以上及 tkinter 后使用 `start.cmd`。复制�
 选择原始流水后会自动检查格式，陌生表头可用“设置列对应”保存规则。“支持范围”按钮可离线查看格式和限制；已实现的格式不代表所有银行导出都已认证。QIF 单独使用 AUTO/MDY/DMY，遇到歧义会停止；FNB 官方 QIF 使用 MDY，需核对来源后再选择。
 
 IQ 顺序固定为 **表头 → 月初日期 → 所有交易 → 月末日期**。首尾日期行的其余六列留空，不计入笔数和金额。金额正负号、内部转账和疑似重复交易均保留；按文件名字母顺序处理，文件内保留原始行序。缺少完整期初期末余额时会明确提示，不会声称已经完整核平。
+
+每次还会在原有 IQ CSV 旁生成 `ERP_import_YYYY-MM.xlsx`。Excel 中所有日期（含月初、月末）都是 `DATE(年,月,日)` 公式，保存了日期计算结果，并明确按 `dd/mm/yyyy` 显示。金额为两位小数的数值，说明和参考号保留为文字，包括前导零和以 `=、+、-、@` 开头的内容。两份文件的七列和行序一致；原来的 IQ 导入继续使用 CSV。遇到 Excel 无法原样保存的内容（非法控制字符、1900 年前日期、超过 15 位有效数字的金额等）会明确停止，不会静默修改。文件夹选择会根据实际表头排除已生成的 CSV/XLSX 成品，防止重复合并。
