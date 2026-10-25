@@ -1,0 +1,94 @@
+name: Official Python Launcher observation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/python-launcher-observation.yml'
+      - 'tests/run_python_launcher_check.py'
+      - 'tests/start_mac.pyw'
+
+permissions:
+  contents: read
+
+jobs:
+  launcher-observation:
+    name: Python Launcher / ${{ matrix.case }}
+    runs-on: macos-15
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [clean, quarantine0083, quarantine0087]
+    env:
+      PYTHONNOUSERSITE: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify official installer before installing on this disposable hosted Mac
+        shell: bash
+        env:
+          BANK_PY_LAUNCHER_RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          if [[ "$BANK_PY_LAUNCHER_RUNNER_KIND" != 'github-hosted' || "$GITHUB_ACTIONS" != 'true' || "$RUNNER_OS" != 'macOS' || "$(/usr/bin/uname -s)" != 'Darwin' ]]; then
+            echo 'This experiment refuses user computers and self-hosted runners.'
+            exit 1
+          fi
+          mkdir -p python-launcher-artifacts
+          package="$RUNNER_TEMP/python-3.13.17-macos11.pkg"
+          /usr/bin/curl --fail --location --retry 2 --proto '=https' --tlsv1.2 \
+            'https://www.python.org/ftp/python/3.13.17/python-3.13.17-macos11.pkg' \
+            --output "$package"
+          printf '%s  %s\n' \
+            '3053592af66128269efab37fe7851a4894920b27c442aeec99ce4d34d17c07e3' \
+            "$package" | /usr/bin/shasum -a 256 -c - | tee python-launcher-artifacts/installer-hash.txt
+          /usr/sbin/pkgutil --check-signature "$package" 2>&1 | tee python-launcher-artifacts/installer-signature.txt
+          /usr/bin/grep -F 'Developer ID Installer: Python Software Foundation' python-launcher-artifacts/installer-signature.txt
+          /usr/sbin/spctl --assess --type install --verbose=4 "$package" 2>&1 | tee python-launcher-artifacts/installer-gatekeeper.txt
+          sudo /usr/sbin/installer -pkg "$package" -target / 2>&1 | tee python-launcher-artifacts/installer-output.txt
+
+      - name: Build the reviewed v5.2 release using the runner system Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -B build_release.py
+
+      - name: Observe the normal document-opening path without accepting dialogs
+        shell: bash
+        env:
+          BANK_PY_LAUNCHER_RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -X utf8 -B tests/run_python_launcher_check.py \
+            --package dist/bank-converter.zip \
+            --expected-package-sha256 babdc6f6e7271d50dc47a0e6a5ff250eb84927f083bcca96aa39af5d5b4dc567 \
+            --wrapper tests/start_mac.pyw \
+            --expected-wrapper-sha256 5b2dd17225d7c5583b5c29a09aa42da567248be9dd17230112d9447b9f6ea90f \
+            --case '${{ matrix.case }}' \
+            --artifacts python-launcher-artifacts/observation
+
+      - name: Record observation scope without claiming a successful application launch
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f python-launcher-artifacts/observation/summary.md ]]; then
+            cat python-launcher-artifacts/observation/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' \
+              '## Python Launcher observation incomplete' \
+              'No application-open or Gatekeeper result is established. Inspect installer diagnostics and job logs.' \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Preserve disposable-runner screenshots and observations
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-launcher-observation-${{ matrix.case }}
+          path: python-launcher-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
