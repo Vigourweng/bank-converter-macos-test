@@ -1,4 +1,4 @@
-name: Official Python Launcher observation
+name: Python Launcher without Terminal observation
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   launcher-observation:
-    name: Python Launcher / ${{ matrix.case }}
+    name: Python Launcher without Terminal / ${{ matrix.case }}
     runs-on: macos-15
     timeout-minutes: 15
     strategy:
@@ -69,6 +69,7 @@ jobs:
             --wrapper tests/start_mac.pyw \
             --expected-wrapper-sha256 5b2dd17225d7c5583b5c29a09aa42da567248be9dd17230112d9447b9f6ea90f \
             --case '${{ matrix.case }}' \
+            --without-terminal \
             --artifacts python-launcher-artifacts/observation
 
       - name: Record observation scope without claiming a successful application launch
@@ -88,7 +89,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: python-launcher-observation-${{ matrix.case }}
+          name: python-launcher-without-terminal-${{ matrix.case }}
           path: python-launcher-artifacts/
           if-no-files-found: warn
           retention-days: 7

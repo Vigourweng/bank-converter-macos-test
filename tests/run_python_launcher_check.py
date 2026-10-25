@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import plistlib
 import stat
 import subprocess
 import sys
@@ -19,6 +20,8 @@ import uuid
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 LAUNCHER_APP = Path('/Applications/Python 3.13/Python Launcher.app')
+LAUNCHER_DOMAIN = 'org.python.PythonLauncher'
+SCRIPT_FACTORY_KEY = 'Python Script'
 LIMITS = [
     'These are synthetic quarantine inputs, not an actual Lark or browser download.',
     'Each case uses a fresh GitHub-hosted macOS runner. No personal account or data is used.',
@@ -26,6 +29,7 @@ LIMITS = [
     'LaunchServices opens the document explicitly with official Python Launcher.app, equivalent to Open With, not a literal Finder double-click.',
     'A normal user may need to choose Open With > Python Launcher once, or set that file association. This experiment does not set associations.',
     'Python Launcher may request ordinary permission to control Terminal. No permission is pregranted or accepted in this experiment.',
+    'With --without-terminal, only the normal Python Launcher Python Script/with_terminal presentation preference is set to false before first launch. The default experiment remains available without that flag.',
     'A zero exit status for open means a request was accepted, not that Gatekeeper approved it or the bank window opened.',
     'Screenshots require visual review. A completed CI job is evidence collection, not a compatibility or security pass.',
     'No quarantine attribute is removed, no Gatekeeper setting changes, and no warning or permission dialog is clicked.',
@@ -83,6 +87,35 @@ def processes(app_dir):
     return observed
 
 
+def configure_launcher_presentation(out, report):
+    """Set an ordinary app preference, never a privacy or security permission."""
+    bundle = plistlib.loads((LAUNCHER_APP / 'Contents/Info.plist').read_bytes())
+    assert bundle.get('CFBundleIdentifier') == LAUNCHER_DOMAIN, 'Unexpected preference domain'
+    running = command(['/bin/ps', '-axo', 'comm,args'])
+    required(running, 'Verify Python Launcher has not already started')
+    assert str(LAUNCHER_APP) not in running['stdout'], 'Python Launcher already running; refusing preference change'
+    before = command(['/usr/bin/defaults', 'export', LAUNCHER_DOMAIN, '-'])
+    report['launcher_presentation_preference'] = dict(
+        changed=False, domain=LAUNCHER_DOMAIN, factoryKey=SCRIPT_FACTORY_KEY,
+        preference='with_terminal', requested_value=False,
+        scope='Normal application presentation preference only; no TCC or security settings changed.',
+        export_before=before)
+    settings = {SCRIPT_FACTORY_KEY: {'with_terminal': False}}
+    preference_file = out / 'python-launcher-presentation.plist'
+    preference_file.write_bytes(plistlib.dumps(settings, fmt=plistlib.FMT_XML, sort_keys=True))
+    imported = command(['/usr/bin/defaults', 'import', LAUNCHER_DOMAIN, preference_file])
+    report['launcher_presentation_preference']['import_result'] = imported
+    required(imported, 'Import ordinary Python Launcher presentation preference')
+    report['launcher_presentation_preference']['changed'] = True
+    exported = command(['/usr/bin/defaults', 'export', LAUNCHER_DOMAIN, '-'])
+    report['launcher_presentation_preference']['export_after'] = exported
+    required(exported, 'Read back ordinary Python Launcher preference')
+    readback = plistlib.loads(exported['stdout'].encode('utf-8'))
+    selected = readback.get(SCRIPT_FACTORY_KEY, {}).get('with_terminal')
+    assert selected is False, 'Python Script/with_terminal did not read back as boolean false'
+    report['launcher_presentation_preference']['verified_value'] = selected
+
+
 def capture(path, started, target):
     # Popen prevents screencapture from blocking the scheduled observation loop.
     requested = time.monotonic()
@@ -127,6 +160,8 @@ def main():
     parser.add_argument('--expected-wrapper-sha256', required=True)
     parser.add_argument('--case', choices=['clean', 'quarantine0083', 'quarantine0087'], required=True)
     parser.add_argument('--artifacts', type=Path, required=True)
+    parser.add_argument('--without-terminal', action='store_true',
+                        help='Set only Python Launcher Python Script/with_terminal=false before first open')
     args = parser.parse_args()
     if (sys.platform != 'darwin' or os.environ.get('GITHUB_ACTIONS') != 'true'
             or os.environ.get('BANK_PY_LAUNCHER_RUNNER_KIND') != 'github-hosted'
@@ -136,7 +171,10 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     report = dict(experiment='Official Python Launcher document opening', case=args.case,
                   platform=platform.platform(), architecture=platform.machine(),
-                  limitations=LIMITS, screenshots=[], result='incomplete')
+                  limitations=LIMITS, screenshots=[], result='incomplete',
+                  presentation_mode='without_terminal' if args.without_terminal else 'factory_defaults',
+                  launcher_presentation_preference=dict(changed=False, factoryKey=SCRIPT_FACTORY_KEY,
+                                                        preference='with_terminal'))
     exit_code = 1
     try:
         package = args.package.resolve(strict=True)
@@ -208,6 +246,8 @@ def main():
         required(report['launcher_gatekeeper_assessment'], 'Official Python Launcher Gatekeeper assessment')
         report['launcher_xattrs_before'] = xattrs(LAUNCHER_APP)
         report['processes_before'] = processes(app_dir)
+        if args.without_terminal:
+            configure_launcher_presentation(out, report)
         report['launch_argv'] = ['/usr/bin/open', '-a', str(LAUNCHER_APP), str(document)]
         opened_stdout = out / 'open-stdout.txt'
         opened_stderr = out / 'open-stderr.txt'
@@ -271,6 +311,9 @@ def main():
         lines = ['## Python Launcher observation', '',
                  '**Job completion records observations. It does not prove the bank app opened or security checks passed.**', '',
                  '- Case: `{}`'.format(args.case), '- Result: `{}`'.format(report['result']),
+                 '- Presentation mode: `{}`'.format(report['presentation_mode']),
+                 '- Normal app preference changed: `{}` (factoryKey `Python Script`, preference `with_terminal`).'.format(
+                     report['launcher_presentation_preference']['changed']),
                  '- Architecture: `{}`'.format(report['architecture']),
                  '- Release SHA256: `{}`'.format(report.get('release_sha256', 'unavailable')),
                  '- Wrapper SHA256: `{}`'.format(report.get('wrapper_sha256', 'unavailable')), '',
