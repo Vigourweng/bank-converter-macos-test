@@ -1,10 +1,10 @@
-# Bank statement converter v5.4
+# Bank statement converter v5.4.1
 
 This local tool combines supported statement files into an IQ import CSV. This public repository contains application code and fictional test data. **Keep real statements, customer information, personal paths, mapping rules and generated results outside this repository.**
 
 ## Start on Windows
 
-Install Python 3.10 or newer with tkinter, extract the complete tool folder, and open `start.cmd`. Keep the modules and `vendor` folder together when copying or moving the tool.
+Extract the complete tool folder and open `start.cmd`. It checks installed Python 3.10+ runtimes for working tkinter window components, trying the known bundled runtime, registered installations, standard install folders and runnable commands. A broken command or Windows Store placeholder is skipped. Detection does not automatically download Python. Keep the modules and `vendor` folder together when copying or moving the tool.
 
 ## Start on Mac
 
@@ -51,7 +51,7 @@ The XLS reader is xlrd 2.0.2. Its notices and full license are retained in `vend
 
 ## 中文说明
 
-这是银行流水合并工具 **v5.4** 的公开测试仓库，只使用程序和虚构测试数据。真实流水、客户资料、个人路径、自定义规则和生成结果应留在本地。
+这是银行流水合并工具 **v5.4.1** 的公开测试仓库，只使用程序和虚构测试数据。真实流水、客户资料、个人路径、自定义规则和生成结果应留在本地。
 
 ### Mac 第一次使用
 
@@ -62,7 +62,7 @@ The XLS reader is xlrd 2.0.2. Its notices and full license are retained in `vend
 3. 右键 **`start_mac.pyw` → 打开方式 → PythonLauncher**。若没有列出，选 **其他…**，到 **应用程序 → Python 3.13** 中选择。若出现文件类型或默认打开程序的提醒，点 **OK**；本次实测中这是普通提醒，之后显示银行工具窗口。
 4. 以后用相同方式打开。也可在 Finder 选中文件，打开 **显示简介 → 打开方式 → PythonLauncher**，记住打开程序。
 
-旧的 `start_mac.command` 仍保留，但某些下载副本可能继续被阻止；请使用上面的 `.pyw` 入口。v5.4 保留同样的启动方式，新增 Excel 日期公式副本；流水解析及 IQ CSV 规则保持一致。
+旧的 `start_mac.command` 仍保留，但某些下载副本可能继续被阻止；请使用上面的 `.pyw` 入口。v5.4.1 保留同样的启动方式，新增 Excel 日期公式副本；流水解析及 IQ CSV 规则保持一致。
 
 ### 实测结果与限制
 
